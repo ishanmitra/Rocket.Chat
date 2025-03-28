@@ -12,7 +12,9 @@ import {
 	MessageComposerToolbarSubmit,
 	MessageComposerSkeleton,
 	MessageComposerHint,
+	MessageComposerInputNew
 } from '.';
+
 
 export default {
 	title: 'Components/MessageComposer',
@@ -50,6 +52,25 @@ export const _MessageComposer: StoryFn<typeof MessageComposer> = () => (
 		</MessageComposerToolbar>
 	</MessageComposer>
 );
+
+export const _MessageComposerNew: StoryFn<typeof MessageComposer> = (args) => (
+	<MessageComposer>
+		<MessageComposerInput placeholder={args.placeholder || "Placeholder text"} />
+		<MessageComposerInputNew placeholder="RealTimeEditor" />
+		<MessageComposerToolbar>
+			<MessageToolbarActions />
+			<MessageComposerToolbarSubmit>
+				<MessageComposerAction aria-label='Send' icon='send' disabled={false} secondary={true} info={true} />
+			</MessageComposerToolbarSubmit>
+		</MessageComposerToolbar>
+	</MessageComposer>
+);
+
+_MessageComposerNew.args = {
+	// Define the props (args) you want to control
+	placeholder: 'Type a message...'
+};
+
 
 export const MessageComposerWithHints: StoryFn<typeof MessageComposer> = () => (
 	<>

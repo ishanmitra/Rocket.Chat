@@ -10,6 +10,8 @@ import MessageComposerToolbar from './MessageComposerToolbar';
 import MessageComposerToolbarActions from './MessageComposerToolbarActions';
 import MessageComposerToolbarSubmit from './MessageComposerToolbarSubmit';
 
+import MessageComposerInputNew from './MessageComposerInputNew';
+
 export {
 	MessageComposer,
 	MessageComposerAction,
@@ -22,4 +24,6 @@ export {
 	MessageComposerIcon,
 	MessageComposerHint,
 	MessageComposerButton,
+
+	MessageComposerInputNew
 };
