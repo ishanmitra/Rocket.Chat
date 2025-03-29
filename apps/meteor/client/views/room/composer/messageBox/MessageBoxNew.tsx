@@ -21,7 +21,8 @@ import MessageBoxActionsToolbar from './MessageBoxActionsToolbar';
 import MessageBoxFormattingToolbar from './MessageBoxFormattingToolbar';
 import MessageBoxHint from './MessageBoxHint';
 import MessageBoxReplies from './MessageBoxReplies';
-import { createComposerAPI } from '../../../../../app/ui-message/client/messageBox/createComposerAPI';
+/* import { createComposerAPI } from '../../../../../app/ui-message/client/messageBox/createComposerAPI'; */
+import { newCreateComposerAPI } from '../../../../../app/ui-message/client/messageBox/newCreateComposerAPI';
 import type { FormattingButton } from '../../../../../app/ui-message/client/messageBox/messageBoxFormatting';
 import { formattingButtons } from '../../../../../app/ui-message/client/messageBox/messageBoxFormatting';
 import { getImageExtensionFromMime } from '../../../../../lib/getImageExtensionFromMime';
@@ -135,7 +136,7 @@ const MessageBoxNew = ({
 	const storageID = `messagebox_${room._id}${tmid ? `-${tmid}` : ''}`;
 
 	const callbackRef = useCallback(
-		(node: HTMLTextAreaElement) => {
+		(node: HTMLDivElement) => {
 			if (node === null && chat.composer) {
 				return chat.setComposerAPI();
 			}
@@ -143,7 +144,7 @@ const MessageBoxNew = ({
 			if (chat.composer) {
 				return;
 			}
-			chat.setComposerAPI(createComposerAPI(node, storageID));
+			chat.setComposerAPI(newCreateComposerAPI(node, storageID));
 		},
 		[chat, storageID],
 	);
@@ -257,7 +258,9 @@ const MessageBoxNew = ({
 		onTyping?.();
 	});
 
-	const isEditing = useSyncExternalStore(chat.composer?.editing.subscribe ?? emptySubscribe, chat.composer?.editing.get ?? getEmptyFalse);
+	const isEditing = useSyncExternalStore(
+		chat.composer?.editing.subscribe ?? emptySubscribe,
+		chat.composer?.editing.get ?? getEmptyFalse);
 
 	const isRecordingAudio = useSyncExternalStore(
 		chat.composer?.recording.subscribe ?? emptySubscribe,
