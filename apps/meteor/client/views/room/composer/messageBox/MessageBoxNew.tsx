@@ -47,10 +47,10 @@ import { useMessageBoxAutoFocus } from './hooks/useMessageBoxAutoFocus';
 import { useMessageBoxPlaceholder } from './hooks/useMessageBoxPlaceholder';
 import { useSafeRefCallback } from '../../../../hooks/useSafeRefCallback';
 
-const reducer = (_: unknown, event: FormEvent<HTMLInputElement>): boolean => {
-	const target = event.target as HTMLInputElement;
+const reducer = (_: unknown, event: FormEvent<HTMLDivElement>): boolean => {
+	const target = event.target as HTMLDivElement;
 
-	return Boolean(target.value.trim());
+	return Boolean(target.innerText.trim());
 };
 
 const handleFormattingShortcut = (event: KeyboardEvent, formattingButtons: FormattingButton[], composer: ComposerAPI) => {
@@ -410,7 +410,7 @@ const MessageBoxNew = ({
 					aria-label={composerPlaceholder}
 					name='msg'
 					disabled={isRecording || !canSend}
-					onChange={setTyping}
+					onInput={setTyping}
 					/*style={textAreaStyle}*/
 					placeholder={composerPlaceholder}
 					onPaste={handlePaste}
