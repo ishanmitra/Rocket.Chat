@@ -30,7 +30,7 @@ export const getSelectionRange = (input: HTMLDivElement): { selectionStart: numb
 	});
 
 	let currentNode: Node | null;
-	let runningOffset = 0;
+	let runningOffset = -1;
 	let anchorPosition: number | null = null;
 	let focusPosition: number | null = null;
 
@@ -92,7 +92,7 @@ export const setSelectionRange = (input: HTMLDivElement, selectionStart: number,
 	const walker = document.createTreeWalker(input, NodeFilter.SHOW_ALL, null);
 	let node: Node | null;
 
-	let runningOffset = 0;
+	let runningOffset = -1;
 	let startNode: Node | null = null;
 	let endNode: Node | null = null;
 	let startOffset = 0;
