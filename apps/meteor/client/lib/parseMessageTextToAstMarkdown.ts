@@ -124,9 +124,21 @@ export const removePossibleNullMessageValues = <TMessage extends IMessage = IMes
 });
 
 const textToMessageToken = (textOrRoot: string | Root, parseOptions: Options): Root => {
+
+	console.log("textToMessageToken")
+
 	if (!textOrRoot) {
 		return [];
 	}
+
+	if (typeof textOrRoot === 'string') {
+		console.log('textOrRoot is a string:', textOrRoot);
+	} else {
+		console.log('textOrRoot is a parsed Root:', textOrRoot);
+	}
+
+	console.log("parseOptions", parseOptions)
+
 
 	if (isParsedMessage(textOrRoot)) {
 		return textOrRoot;
@@ -134,6 +146,8 @@ const textToMessageToken = (textOrRoot: string | Root, parseOptions: Options): R
 	const parsedMessage = parse(textOrRoot, parseOptions);
 
 	const parsedMessageCleaned = parsedMessage[0].type !== 'LINE_BREAK' ? parsedMessage : (parsedMessage.slice(1) as Root);
+
+	console.log(parsedMessageCleaned);
 
 	return parsedMessageCleaned;
 };

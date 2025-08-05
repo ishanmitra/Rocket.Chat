@@ -2,6 +2,8 @@
 // TODO: CRITICAL fix the race condition between the room composer and thread composer
 import type { IMessage, ISubscription } from '@rocket.chat/core-typings';
 import { useContentBoxSize, useEffectEvent } from '@rocket.chat/fuselage-hooks';
+import type { Options } from '@rocket.chat/message-parser';
+import { parse } from '@rocket.chat/message-parser';
 import { useSafeRefCallback } from '@rocket.chat/ui-client';
 import {
 	MessageComposerAction,
@@ -39,6 +41,7 @@ import { roomCoordinator } from '../../../../lib/rooms/roomCoordinator';
 import { keyCodes } from '../../../../lib/utils/keyCodes';
 import AudioMessageRecorder from '../../../composer/AudioMessageRecorder';
 import VideoMessageRecorder from '../../../composer/VideoMessageRecorder';
+import { useAutoLinkDomains } from '../../MessageList/hooks/useAutoLinkDomains';
 import { useChat } from '../../contexts/ChatContext';
 import { useComposerPopupOptions } from '../../contexts/ComposerPopupContext';
 import { useRoom } from '../../contexts/RoomContext';
@@ -234,7 +237,7 @@ const RichTextMessageBox = ({
 		/* TODO: Develop the parser function that will render inside the RichTextComposer component */
 		// This if-else block temporarily solves the problem of editing a message
 		// When a message is being edited, it is a flat text structure without any DOM tree
-		if (chat.currentEditing || isFirefox) {
+		if (chat.currentEditing) {
 			onSend?.({
 				value: text,
 				tshow,
@@ -449,6 +452,50 @@ const RichTextMessageBox = ({
 
 	const shouldPopupPreview = useEnablePopupPreview(popup.filter, popup.option);
 
+	const customDomains = useAutoLinkDomains();
+
+	// Custom button functions that are populated in the formatter toolbar
+	const handleCustomFunction = () => {
+		const input = contentEditableRef.current as HTMLDivElement;
+
+		// input.focus();
+
+		// document.execCommand?.('insertHTML', false, "<b>this is a test</b>")
+
+		const parseOptions: Options = {
+			customDomains,
+			emoticons: true,
+		};
+
+		const start = performance.now();
+		const parsedMessage = parse(input.innerText, parseOptions);
+		const end = performance.now();
+
+		console.log(parsedMessage)
+		console.log(typeof parsedMessage)
+		console.log(`Parsing took ${(end - start).toFixed(2)} ms`);
+	};
+
+	const replaceHTMLFunction = () => {
+		const input = contentEditableRef.current as HTMLDivElement;
+
+		input.focus();
+
+		console.log(input.innerText.length);
+
+		setSelectionRange(input, 0, input.innerText.length);
+		document.execCommand?.('insertHTML', false, "<i>this is a test</i>")
+	};
+
+	const getAllLines = () => {
+
+		const input = contentEditableRef.current as HTMLElement;
+		const text = input.innerText; // Preserves visual line breaks
+
+		const lines = text.split("\n"); // Each line split
+		console.log(lines);
+	};
+
 	return (
 		<>
 			{chat.composer?.quotedMessages && <MessageBoxReplies />}
@@ -523,6 +570,9 @@ const RichTextMessageBox = ({
 								disabled={isRecording || !canSend}
 							/>
 						)}
+						<MessageComposerAction title='handleCustomFunction' aria-label='Function' icon='katex' onClick={handleCustomFunction} />
+						<MessageComposerAction title='replaceHTMLFunction' aria-label='Function' icon='katex' onClick={replaceHTMLFunction} />
+						<MessageComposerAction title='getAllLines' aria-label='Function' icon='list' onClick={getAllLines} />
 						<MessageBoxActionsToolbar
 							canSend={canSend}
 							typing={typing}

@@ -4,7 +4,8 @@ import { Accounts } from 'meteor/accounts-base';
 
 import type { FormattingButton } from './messageBoxFormatting';
 import { formattingButtons } from './messageBoxFormatting';
-import { getSelectionRange, setSelectionRange, getCursorSelectionInfo } from './selectionRange';
+import { struggle } from './richTextResolver';
+import { getSelectionRange, setSelectionRange, getCursorSelectionInfo, parseMessage } from './selectionRange';
 import type { ComposerAPI } from '../../../../client/lib/chats/ChatAPI';
 import { withDebouncing } from '../../../../lib/utils/highOrderFunctions';
 
@@ -51,6 +52,7 @@ export const createRichTextComposerAPI = (input: HTMLDivElement, storageID: stri
 	};
 
 	input.addEventListener('input', persist);
+	input.addEventListener('beforeinput', (e) => struggle(e, input));
 	document.addEventListener('selectionchange', printSelection);
 
 	const setText = (
@@ -221,6 +223,7 @@ export const createRichTextComposerAPI = (input: HTMLDivElement, storageID: stri
 
 	const release = (): void => {
 		input.removeEventListener('input', persist);
+		input.removeEventListener('beforeinput', (e) => struggle(e, input));
 		document.removeEventListener('selectionchange', printSelection);
 		stopFormatterTracker.stop();
 	};
@@ -293,6 +296,9 @@ export const createRichTextComposerAPI = (input: HTMLDivElement, storageID: stri
 	setText(Accounts.storageLocation.getItem(storageID) ?? '', {
 		skipFocus: true,
 	});
+
+	// TODO: Call resolver function that parses the entire message after setText loads from storageLocation
+	// Might not be necessary
 
 	// Gets the text that is connected to the cursor and replaces it with the given text
 	const replaceText = (text: string, selection: { readonly start: number; readonly end: number }): void => {
