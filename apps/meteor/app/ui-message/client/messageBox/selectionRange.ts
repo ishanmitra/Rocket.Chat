@@ -1,10 +1,3 @@
-// TODO: Change the Selection API to support rich text as the current version may support flat text only.
-/* Use Selection API to get the selectionStart and selectionEnd from contenteditable div */
-
-import { parse } from '@rocket.chat/message-parser';
-import type { Options, Root } from '@rocket.chat/message-parser';
-
-// NOTE: The top-left position starts from 1 and NOT 0
 export const getSelectionRange = (input: HTMLDivElement): { selectionStart: number; selectionEnd: number } => {
 	const selection = window.getSelection();
 	if (!selection?.rangeCount) {
@@ -262,32 +255,4 @@ export const getSelectionRangeFromLines = (
 	}
 
 	return { selectionStart, selectionEnd };
-};
-
-// NOTE: This function is NOT used in the rendition pipeline
-export const parseMessage = (input: HTMLDivElement, firstLine: number, lastLine: number): Root => {
-	// TODO: Currently using the parseOptions without using any React hooks
-	// Needs to be changed later by chaining the values from RichTextComposer component itself
-	const parseOptions: Options = {
-		colors: true,
-		emoticons: true,
-		customDomains: [],
-		katex: {
-			dollarSyntax: false,
-			parenthesisSyntax: true,
-		},
-	};
-
-	const text = input.innerText;
-	const subText = text.slice(firstLine, lastLine);
-
-	console.log(subText);
-
-	if (subText.trim() === '') {
-		return [] as Root;
-	}
-
-	const parsedMessage = parse(subText, parseOptions);
-
-	return parsedMessage;
 };
