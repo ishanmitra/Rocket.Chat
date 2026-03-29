@@ -6,9 +6,12 @@ import {
 	bold,
 	code,
 	codeLine,
+	color,
 	emoji,
 	heading,
+	image,
 	inlineKatex,
+	inlineCode,
 	katex,
 	lineBreak,
 	link,
@@ -20,8 +23,12 @@ import {
 	plain,
 	quote,
 	spoilerBlock,
+	strike,
 	task,
 	tasks,
+	timestamp,
+	timestampFromHours,
+	timestampFromIsoTime,
 	unorderedList,
 } from '../utils';
 
@@ -326,19 +333,119 @@ const codeFenceLanguage = (line: string): string | undefined => {
 	return match[1] ?? '';
 };
 
-const parseParagraphInlines = (line: string) => {
-	const mention = /^#([^\s#]+)(.*)$/.exec(line);
-
-	if (!mention) {
-		return [plain(line)];
+const parseColorValue = (hex: string): ReturnType<typeof color> | undefined => {
+	if (hex.length === 3 || hex.length === 4) {
+		const values = hex.split('').map((digit) => Number.parseInt(digit + digit, 16));
+		return color(values[0], values[1], values[2], values[3] ?? 255);
 	}
 
-	const [, channel, rest] = mention;
-	return rest ? [mentionChannel(channel), plain(rest)] : [mentionChannel(channel)];
+	if (hex.length === 6 || hex.length === 8) {
+		const values = hex.match(/../g)?.map((byte) => Number.parseInt(byte, 16));
+		if (!values) {
+			return undefined;
+		}
+
+		return color(values[0], values[1], values[2], values[3] ?? 255);
+	}
+
+	return undefined;
 };
 
-const parseInlineSegment = (value: string) => {
-	const result = [] as Array<ReturnType<typeof plain> | ReturnType<typeof bold> | ReturnType<typeof emoji> | ReturnType<typeof mentionUser> | ReturnType<typeof mentionChannel> | ReturnType<typeof link> | ReturnType<typeof inlineKatex>>;
+const parseTimestampValue = (raw: string): string | undefined => {
+	if (/^\d{10}$/.test(raw)) {
+		return raw;
+	}
+
+	const isoMillis = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})([+-]\d{2}:\d{2})?$/.exec(raw);
+	if (isoMillis) {
+		return timestampFromIsoTime({
+			year: isoMillis[1],
+			month: isoMillis[2],
+			day: isoMillis[3],
+			hours: isoMillis[4],
+			minutes: isoMillis[5],
+			seconds: isoMillis[6],
+			milliseconds: isoMillis[7],
+			timezone: isoMillis[8],
+		});
+	}
+
+	const iso = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})([+-]\d{2}:\d{2})?$/.exec(raw);
+	if (iso) {
+		return timestampFromIsoTime({
+			year: iso[1],
+			month: iso[2],
+			day: iso[3],
+			hours: iso[4],
+			minutes: iso[5],
+			seconds: iso[6],
+			timezone: iso[7],
+		});
+	}
+
+	const hoursSeconds = /^(\d{2}):(\d{2}):(\d{2})([+-]\d{2}:\d{2})?$/.exec(raw);
+	if (hoursSeconds) {
+		return timestampFromHours(hoursSeconds[1], hoursSeconds[2], hoursSeconds[3], hoursSeconds[4]);
+	}
+
+	const hoursMinutes = /^(\d{2}):(\d{2})([+-]\d{2}:\d{2})?$/.exec(raw);
+	if (hoursMinutes) {
+		return timestampFromHours(hoursMinutes[1], hoursMinutes[2], undefined, hoursMinutes[3]);
+	}
+
+	return undefined;
+};
+
+const parseTimestampExpression = (expression: string): { raw: string; format?: 't' | 'T' | 'd' | 'D' | 'f' | 'F' | 'R' } => {
+	const lastColon = expression.lastIndexOf(':');
+
+	if (lastColon === -1) {
+		return { raw: expression };
+	}
+
+	const maybeFormat = expression.slice(lastColon + 1);
+
+	if (/^[tTdDfFR]$/.test(maybeFormat)) {
+		return {
+			raw: expression.slice(0, lastColon),
+			format: maybeFormat as 't' | 'T' | 'd' | 'D' | 'f' | 'F' | 'R',
+		};
+	}
+
+	return { raw: expression };
+};
+
+const isMentionBoundary = (value: string, cursor: number): boolean => {
+	if (cursor === 0) {
+		return true;
+	}
+
+	return /\s/.test(value[cursor - 1] ?? '');
+};
+
+const parseInlineSegment = (
+	value: string,
+	options?: Options,
+	config: {
+		allowTimestamp?: boolean;
+		allowBold?: boolean;
+		allowStrike?: boolean;
+	} = {},
+) => {
+	const result = [] as Array<
+		| ReturnType<typeof plain>
+		| ReturnType<typeof bold>
+		| ReturnType<typeof strike>
+		| ReturnType<typeof emoji>
+		| ReturnType<typeof mentionUser>
+		| ReturnType<typeof mentionChannel>
+		| ReturnType<typeof link>
+		| ReturnType<typeof image>
+		| ReturnType<typeof inlineCode>
+		| ReturnType<typeof inlineKatex>
+		| ReturnType<typeof color>
+		| ReturnType<typeof timestamp>
+	>;
 	let cursor = 0;
 
 	const pushPlain = (text: string) => {
@@ -358,31 +465,63 @@ const parseInlineSegment = (value: string) => {
 
 	while (cursor < value.length) {
 		const remaining = value.slice(cursor);
-
 		const patterns = [
+			{
+				match: /^!\[([^\]]*)\]\(([^)]+)\)/.exec(remaining),
+				build: (match: RegExpExecArray) => image(match[2], plain(match[1] || match[2])),
+			},
 			{
 				match: /^\[([^\]]+)\]\(([^)]+)\)/.exec(remaining),
 				build: (match: RegExpExecArray) => link(match[2], [plain(match[1])]),
 			},
 			{
-				match: /^\*\*([^*]+)\*\*/.exec(remaining) ?? /^\*([^*]+)\*/.exec(remaining),
-				build: (match: RegExpExecArray) => bold([plain(match[1])]),
+				match: /^`([^`\n]+)`/.exec(remaining),
+				build: (match: RegExpExecArray) => inlineCode(plain(match[1])),
+			},
+			{
+				match:
+					config.allowTimestamp !== false
+						? /^<t:([^>]+)>/.exec(remaining)
+						: null,
+				build: (match: RegExpExecArray) => {
+					const parsedExpression = parseTimestampExpression(match[1]);
+					const parsed = parseTimestampValue(parsedExpression.raw);
+					return parsed ? timestamp(parsed, parsedExpression.format ?? 't') : plain(match[0]);
+				},
+			},
+			{
+				match: options?.colors ? /^color:#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})(?![0-9A-Za-z\u0080-\uFFFF])/.exec(remaining) : null,
+				build: (match: RegExpExecArray) => parseColorValue(match[1]) ?? plain(match[0]),
+			},
+			{
+				match: options?.katex?.parenthesisSyntax ? /^\\\((.+?)\\\)/.exec(remaining) : null,
+				build: (match: RegExpExecArray) => inlineKatex(match[1]),
+			},
+			{
+				match:
+					config.allowBold !== false
+						? /^\*\*([^*\n]+)\*\*/.exec(remaining) ?? /^\*([^*\n]+)\*/.exec(remaining)
+						: null,
+				build: (match: RegExpExecArray) => bold(parseInlineSegment(match[1], options, { allowTimestamp: false, allowStrike: false, allowBold: false })),
+			},
+			{
+				match:
+					config.allowStrike !== false
+						? /^~~([^~\n]+)~~/.exec(remaining) ?? /^~([^~\n]+)~/.exec(remaining)
+						: null,
+				build: (match: RegExpExecArray) => strike(parseInlineSegment(match[1], options, { allowTimestamp: true, allowBold: true, allowStrike: false })),
 			},
 			{
 				match: /^:([0-9a-zA-Z\-_.+]+):/.exec(remaining),
 				build: (match: RegExpExecArray) => emoji(match[1]),
 			},
 			{
-				match: /^@([^\s,:@]+(?::[^\s,:@]+)*)/.exec(remaining),
+				match: isMentionBoundary(value, cursor) ? /^@([^\s,]+)/.exec(remaining) : null,
 				build: (match: RegExpExecArray) => mentionUser(match[1]),
 			},
 			{
-				match: /^#([^\s,#]+)/.exec(remaining),
+				match: isMentionBoundary(value, cursor) ? /^#([^\s,#]+)/.exec(remaining) : null,
 				build: (match: RegExpExecArray) => mentionChannel(match[1]),
-			},
-			{
-				match: /^\\\((.+?)\\\)/.exec(remaining),
-				build: (match: RegExpExecArray) => inlineKatex(match[1]),
 			},
 		] as const;
 
@@ -552,7 +691,7 @@ const buildAst = (tokens: ParsedLine[], options?: Options): Root => {
 					break;
 				}
 
-				paragraphs.push(paragraph(parseInlineSegment(blockLine)));
+				paragraphs.push(paragraph(parseInlineSegment(blockLine, options)));
 				cursor += 1;
 
 				if (tokens[cursor]?.kind === 'newline') {
@@ -582,7 +721,7 @@ const buildAst = (tokens: ParsedLine[], options?: Options): Root => {
 					break;
 				}
 
-				items.push(task(parseInlineSegment(item.text), item.status));
+				items.push(task(parseInlineSegment(item.text, options), item.status));
 				cursor += 1;
 
 				if (tokens[cursor]?.kind === 'newline') {
@@ -612,7 +751,7 @@ const buildAst = (tokens: ParsedLine[], options?: Options): Root => {
 					break;
 				}
 
-				items.push(listItem(parseInlineSegment(item.text), item.number));
+				items.push(listItem(parseInlineSegment(item.text, options), item.number));
 				cursor += 1;
 
 				if (tokens[cursor]?.kind === 'newline') {
@@ -643,7 +782,7 @@ const buildAst = (tokens: ParsedLine[], options?: Options): Root => {
 					break;
 				}
 
-				items.push(listItem(parseInlineSegment(item.text)));
+				items.push(listItem(parseInlineSegment(item.text, options)));
 				cursor += 1;
 
 				if (tokens[cursor]?.kind === 'newline') {
@@ -676,7 +815,7 @@ const buildAst = (tokens: ParsedLine[], options?: Options): Root => {
 			continue;
 		}
 
-		output.push(paragraph(parseParagraphInlines(current.value)));
+		output.push(paragraph(parseInlineSegment(current.value, options)));
 		index += 1;
 
 		if (tokens[index]?.kind === 'newline') {
