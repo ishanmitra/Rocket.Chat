@@ -5,6 +5,7 @@ test.each([
 	['*test:*', [paragraph([bold([plain('test:')])])]],
 	['_test:_', [paragraph([italic([plain('test:')])])]],
 	[
+		// :* is an emoticon, but it shouldn't be parsed as one if its glued to a word
 		'*bold ending with colon:*',
 		[paragraph([bold([plain('bold ending with colon:')])])],
 	],

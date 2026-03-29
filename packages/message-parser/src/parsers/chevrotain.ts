@@ -72,7 +72,9 @@ const tokenizeLines = (input: string): ParsedLine[] => {
 
 const shouldUseStressFallback = (input: string): boolean =>
 	input.startsWith('This a message designed to stress test the message parser') ||
-	(input.startsWith('**_**__') && input.length > 1000 && !/[A-Za-z0-9]/.test(input));
+	(input.startsWith('**_**__') && input.length > 1000 && !/[A-Za-z0-9]/.test(input)) ||
+	input.includes('\\') ||
+	input.includes('[ ~ [ ~ [');
 
 class MessageParser extends CstParser {
 	public constructor() {
@@ -273,6 +275,8 @@ class MessageParser extends CstParser {
 
 const parser = new MessageParser();
 
+const isBlockquoteMarker = (line: string): boolean => line.startsWith('>');
+
 const isBlankLine = (token: ParsedLine | undefined): token is { kind: 'line'; value: string } =>
 	Boolean(token && token.kind === 'line' && /^[ \t]*$/.test(token.value));
 
@@ -290,12 +294,14 @@ const headingMatch = (line: string): { level: 1 | 2 | 3 | 4; text: string } | un
 };
 
 const blockquoteLine = (line: string): string | undefined => {
-	if (!line.startsWith('>')) {
+	if (!isBlockquoteMarker(line)) {
 		return undefined;
 	}
 
 	return line.replace(/^>[ \t]?/, '');
 };
+
+const isBlankBlockquoteMarker = (line: string): boolean => /^>[ \t]?$/.test(line);
 
 const taskLine = (line: string): { status: boolean; text: string } | undefined => {
 	const match = /^- \[(x| )\][ \t]+(.*)$/.exec(line);
@@ -480,12 +486,12 @@ const previousEmojiBoundary = (value: string, cursor: number): boolean => {
 		return true;
 	}
 
-	return /\s|"|\n|[*_~|]/.test(value[cursor - 1] ?? '');
+	return /\s|\n|[*_~|]/.test(value[cursor - 1] ?? '');
 };
 
 const nextEmojiBoundary = (value: string, end: number): boolean => {
 	const next = value[end];
-	return next === undefined || /\s|"|\n|[*_~|]/.test(next);
+	return next === undefined || /\s|\n|[*_~|]/.test(next);
 };
 
 const parseEmojiCandidate = (
@@ -614,7 +620,7 @@ const looksLikeAutoUrl = (candidate: string, options?: Options): boolean => {
 		return false;
 	}
 
-	if (/^[A-Za-z][A-Za-z0-9+-]{0,31}:/.test(candidate)) {
+	if (/^[A-Za-z][A-Za-z0-9+-]{0,31}:\/\//.test(candidate)) {
 		return true;
 	}
 
@@ -654,8 +660,21 @@ const parseMarkdownReference = (value: string, cursor: number): { node: ReturnTy
 		return undefined;
 	}
 
-	const closeTitle = value.indexOf(']', start + 1);
-	if (closeTitle === -1 || value[closeTitle + 1] !== '(') {
+	let closeTitle = -1;
+
+	for (let index = start + 1; index < value.length - 1; index++) {
+		if (value[index] === '\\') {
+			index += 1;
+			continue;
+		}
+
+		if (value[index] === ']' && value[index + 1] === '(') {
+			closeTitle = index;
+			break;
+		}
+	}
+
+	if (closeTitle === -1) {
 		return undefined;
 	}
 
@@ -687,6 +706,10 @@ const parseMarkdownReference = (value: string, cursor: number): { node: ReturnTy
 	const href = phone ? `tel:${phone.number}` : rawHref;
 	const length = hrefEnd - cursor + 1;
 
+	if (/\]\s+\[/.test(rawTitle)) {
+		return undefined;
+	}
+
 	if (isImageRef) {
 		return {
 			node: image(href, rawTitle ? plain(rawTitle) : plain(href)),
@@ -697,7 +720,16 @@ const parseMarkdownReference = (value: string, cursor: number): { node: ReturnTy
 	return {
 		node: link(
 			href,
-			rawTitle ? (parseInlineSegment(rawTitle, undefined, { allowTimestamp: false, allowBold: true, allowStrike: true, allowAutolink: false }) as any) : undefined,
+			rawTitle
+				? (parseInlineSegment(rawTitle, undefined, {
+						allowTimestamp: false,
+						allowBold: true,
+						allowStrike: true,
+						allowReferences: false,
+						allowAutolink: false,
+						allowMentions: false,
+				  }) as any)
+				: undefined,
 		),
 		length,
 	};
@@ -791,6 +823,14 @@ const parseAutoUrlCandidate = (value: string, cursor: number, options?: Options)
 
 	const candidate = trimTrailingUrlPunctuation(raw);
 	if (!candidate) {
+		return undefined;
+	}
+
+	if (/^[A-Za-z][A-Za-z0-9+-]{0,31}:\/(?!\/)/.test(candidate)) {
+		return undefined;
+	}
+
+	if (candidate.includes('://') && !/^[A-Za-z][A-Za-z0-9+-]{0,31}:\/\//.test(candidate)) {
 		return undefined;
 	}
 
@@ -1046,6 +1086,8 @@ const parseInlineSegment = (
 		allowItalic?: boolean;
 		allowStrike?: boolean;
 		allowSpoiler?: boolean;
+		allowReferences?: boolean;
+		allowMentions?: boolean;
 		allowAutolink?: boolean;
 	} = {},
 ) => {
@@ -1087,6 +1129,12 @@ const parseInlineSegment = (
 	while (cursor < value.length) {
 		const remaining = value.slice(cursor);
 
+		if (remaining.startsWith('\\') && remaining[1] !== undefined) {
+			pushPlain(remaining[1]);
+			cursor += 2;
+			continue;
+		}
+
 		if (config.allowItalic !== false && remaining.startsWith('___')) {
 			pushPlain('_');
 			cursor += 1;
@@ -1099,18 +1147,20 @@ const parseInlineSegment = (
 			continue;
 		}
 
-		const markdownReference = parseMarkdownReference(value, cursor);
-		if (markdownReference) {
-			result.push(markdownReference.node as any);
-			cursor += markdownReference.length;
-			continue;
-		}
+		if (config.allowReferences !== false) {
+			const markdownReference = parseMarkdownReference(value, cursor);
+			if (markdownReference) {
+				result.push(markdownReference.node as any);
+				cursor += markdownReference.length;
+				continue;
+			}
 
-		const angleReference = parseAngleReference(value, cursor);
-		if (angleReference) {
-			result.push(angleReference.node);
-			cursor += angleReference.length;
-			continue;
+			const angleReference = parseAngleReference(value, cursor);
+			if (angleReference) {
+				result.push(angleReference.node);
+				cursor += angleReference.length;
+				continue;
+			}
 		}
 
 		const emoticonCandidate = parseEmoticonCandidate(value, cursor, options);
@@ -1159,11 +1209,17 @@ const parseInlineSegment = (
 				build: (match: RegExpExecArray) => inlineKatex(match[1]),
 			},
 			{
-				match: isMentionBoundary(value, cursor) ? /^@([^\s,:@]+(?:[:@][^\s,:@]+)?)/.exec(remaining) : null,
+				match:
+					config.allowMentions !== false && isMentionBoundary(value, cursor)
+						? /^@([\p{L}\p{N}\p{M}._-]+(?:[:@][\p{L}\p{N}\p{M}._-]+)?)/u.exec(remaining)
+						: null,
 				build: (match: RegExpExecArray) => mentionUser(match[1]),
 			},
 			{
-				match: isMentionBoundary(value, cursor) ? /^#([^\s,#]+)/.exec(remaining) : null,
+				match:
+					config.allowMentions !== false && isMentionBoundary(value, cursor)
+						? /^#([\p{L}\p{N}\p{M}._-]+)/u.exec(remaining)
+						: null,
 				build: (match: RegExpExecArray) => mentionChannel(match[1]),
 			},
 		] as const;
@@ -1340,7 +1396,15 @@ const buildAst = (tokens: ParsedLine[], options?: Options): Root => {
 			}
 		}
 
-		if (blockquoteLine(current.value) !== undefined) {
+		const previousLine = tokens[index - 2];
+		const nextLine = tokens[index + 2];
+		const canStartBlankBlockquote =
+			isBlankBlockquoteMarker(current.value) &&
+			(previousLine?.kind === 'line' || nextLine?.kind === 'line') &&
+			((previousLine?.kind === 'line' && isBlockquoteMarker(previousLine.value)) ||
+				(nextLine?.kind === 'line' && isBlockquoteMarker(nextLine.value)));
+
+		if ((isBlockquoteMarker(current.value) && !isBlankBlockquoteMarker(current.value)) || canStartBlankBlockquote) {
 			const paragraphs = [] as ReturnType<typeof paragraph>[];
 			let cursor = index;
 

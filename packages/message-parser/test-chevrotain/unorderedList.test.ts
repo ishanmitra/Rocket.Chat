@@ -36,6 +36,7 @@ test.each([
 			]),
 		],
 	],
+
 	[
 		`
 - First item
@@ -48,6 +49,28 @@ test.each([
 			unorderedList([listItem([plain('Second item')]), listItem([plain('Third item')]), listItem([bold([plain('Fourth item')])])]),
 		],
 	],
+	//   [
+	//     `
+	// * First item
+	// * Second item
+	// * Third item
+	//     * Indented item
+	//     * Indented item
+	// * Fourth item
+	// `.trim(),
+	//     [paragraph([])],
+	//   ],
+	//   [
+	//     `
+	// - First item
+	// - Second item
+	// - Third item
+	//     - Indented item
+	//     - Indented item
+	// - Fourth item
+	// `.trim(),
+	//     [paragraph([])],
+	//   ],
 ])('parses %p', (input, output) => {
 	expect(parse(input)).toMatchObject(output);
 });
