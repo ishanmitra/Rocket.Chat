@@ -12,6 +12,7 @@ import {
 	emojiUnicode,
 	heading,
 	image,
+	italic,
 	inlineKatex,
 	inlineCode,
 	katex,
@@ -25,6 +26,7 @@ import {
 	paragraph,
 	plain,
 	quote,
+	spoiler,
 	spoilerBlock,
 	strike,
 	task,
@@ -323,6 +325,10 @@ const unorderedListLine = (line: string): { marker: '-' | '*'; text: string } | 
 		return undefined;
 	}
 
+	if (match[1] === '*' && (match[2] === '*' || (/^[^*].*\*$/.test(match[2]) && !match[2].startsWith('*')))) {
+		return undefined;
+	}
+
 	return {
 		marker: match[1] as '-' | '*',
 		text: match[2],
@@ -469,12 +475,12 @@ const previousEmojiBoundary = (value: string, cursor: number): boolean => {
 		return true;
 	}
 
-	return /\s|"|\n/.test(value[cursor - 1] ?? '');
+	return /\s|"|\n|[*_~|]/.test(value[cursor - 1] ?? '');
 };
 
 const nextEmojiBoundary = (value: string, end: number): boolean => {
 	const next = value[end];
-	return next === undefined || /\s|"|\n/.test(next);
+	return next === undefined || /\s|"|\n|[*_~|]/.test(next);
 };
 
 const parseEmojiCandidate = (
@@ -599,6 +605,10 @@ const parseBigEmojiInput = (input: string, options?: Options): Root | undefined 
 };
 
 const looksLikeAutoUrl = (candidate: string, options?: Options): boolean => {
+	if (!/^[A-Za-z0-9]/.test(candidate)) {
+		return false;
+	}
+
 	if (/^[A-Za-z][A-Za-z0-9+-]{0,31}:/.test(candidate)) {
 		return true;
 	}
@@ -800,7 +810,226 @@ const isMentionBoundary = (value: string, cursor: number): boolean => {
 		return true;
 	}
 
-	return /\s/.test(value[cursor - 1] ?? '');
+	return /[\s*_~|]/.test(value[cursor - 1] ?? '');
+};
+
+const isAlphaNumeric = (value: string | undefined): boolean => Boolean(value && /[0-9A-Za-z]/.test(value));
+
+const isUnderscoreOpeningBoundary = (value: string, cursor: number): boolean => !isAlphaNumeric(value[cursor - 1]);
+
+const isUnderscoreClosingBoundary = (value: string, cursor: number, delimiterLength: number): boolean =>
+	!isAlphaNumeric(value[cursor + delimiterLength]);
+
+const hasRepeatedDelimiter = (value: string, cursor: number, delimiter: string): boolean => value[cursor + delimiter.length] === delimiter[0];
+
+const isEmoticonCloser = (value: string, cursor: number, options?: Options): boolean =>
+	Boolean(parseEmoticonCandidate(value, cursor - 1, options));
+
+const hasBalancedDoubleTildes = (content: string): boolean => ((content.match(/~~/g)?.length ?? 0) % 2) === 0;
+
+const isUnderscoreMentionTail = (value: string, candidateIndex: number, openerIndex: number): boolean => {
+	const segmentStart = Math.max(openerIndex + 1, value.lastIndexOf(' ', candidateIndex - 1) + 1);
+	const raw = value.slice(segmentStart);
+	const mention = /^@([^\s,:@]+(?:[:@][^\s,:@]+)?)/.exec(raw);
+
+	return Boolean(mention && segmentStart + mention[0].length === candidateIndex + 1);
+};
+
+const findDelimitedContent = (
+	value: string,
+	cursor: number,
+	open: string,
+	close: string,
+	options: Options | undefined,
+	isValidOpen?: () => boolean,
+	isValidCloser?: (candidateIndex: number) => boolean,
+	isValidContent?: (content: string) => boolean,
+): { content: string; length: number } | undefined => {
+	if (!value.startsWith(open, cursor)) {
+		return undefined;
+	}
+
+	if (isValidOpen && !isValidOpen()) {
+		return undefined;
+	}
+
+	let candidateIndex = cursor + open.length;
+
+	while (candidateIndex <= value.length - close.length) {
+		candidateIndex = value.indexOf(close, candidateIndex);
+
+		if (candidateIndex === -1) {
+			return undefined;
+		}
+
+		if (isEmoticonCloser(value, candidateIndex, options)) {
+			candidateIndex += 1;
+			continue;
+		}
+
+		if (isValidCloser && !isValidCloser(candidateIndex)) {
+			candidateIndex += 1;
+			continue;
+		}
+
+		const content = value.slice(cursor + open.length, candidateIndex);
+
+		if (content.trim() === '') {
+			candidateIndex += 1;
+			continue;
+		}
+
+		if (isValidContent && !isValidContent(content)) {
+			candidateIndex += 1;
+			continue;
+		}
+
+		return {
+			content,
+			length: candidateIndex + close.length - cursor,
+		};
+	}
+
+	return undefined;
+};
+
+const parseInlineDelimited = (
+	value: string,
+	cursor: number,
+	options: Options | undefined,
+	config: {
+		allowTimestamp?: boolean;
+		allowBold?: boolean;
+		allowItalic?: boolean;
+		allowStrike?: boolean;
+		allowSpoiler?: boolean;
+		allowAutolink?: boolean;
+	},
+) => {
+	if (config.allowSpoiler !== false) {
+		const spoilerContent = findDelimitedContent(value, cursor, '||', '||', options);
+		if (spoilerContent) {
+			return {
+				node: spoiler(
+					parseInlineSegment(spoilerContent.content, options, {
+						allowTimestamp: true,
+						allowBold: true,
+						allowItalic: true,
+						allowStrike: true,
+						allowSpoiler: false,
+					}),
+				),
+				length: spoilerContent.length,
+			};
+		}
+	}
+
+	if (config.allowBold !== false) {
+		const boldContent = value.startsWith('**', cursor)
+			? findDelimitedContent(
+					value,
+					cursor,
+					'**',
+					'**',
+					options,
+					() => !hasRepeatedDelimiter(value, cursor, '**'),
+					undefined,
+					hasBalancedDoubleTildes,
+			  )
+			: findDelimitedContent(
+					value,
+					cursor,
+					'*',
+					'*',
+					options,
+					() => !(value[cursor - 1] === '*' && /\s/.test(value[cursor + 1] ?? '')),
+					undefined,
+					hasBalancedDoubleTildes,
+			  );
+
+		if (boldContent) {
+			return {
+				node: bold(
+					parseInlineSegment(boldContent.content, options, {
+						allowTimestamp: false,
+						allowBold: false,
+						allowItalic: true,
+						allowStrike: true,
+						allowSpoiler: true,
+						allowAutolink: false,
+					}),
+				),
+				length: boldContent.length,
+			};
+		}
+	}
+
+	if (config.allowItalic !== false && isUnderscoreOpeningBoundary(value, cursor)) {
+		const italicContent = value.startsWith('__', cursor)
+			? findDelimitedContent(
+					value,
+					cursor,
+					'__',
+					'__',
+					options,
+					() => value[cursor + 2] !== ' ',
+					(candidateIndex) => isUnderscoreClosingBoundary(value, candidateIndex, 2) && value[candidateIndex - 1] !== '_',
+					(content) => !content.includes('__'),
+			  )
+			: findDelimitedContent(
+					value,
+					cursor,
+					'_',
+					'_',
+					options,
+					() => value[cursor + 1] !== '_',
+					(candidateIndex) =>
+						isUnderscoreClosingBoundary(value, candidateIndex, 1) &&
+						value[candidateIndex - 1] !== '_' &&
+						(value[candidateIndex + 1] !== '_' || value[cursor - 1] !== '_') &&
+						!isUnderscoreMentionTail(value, candidateIndex, cursor),
+					(content) => !(value[cursor - 1] === '_' && content.includes('__')),
+			  );
+
+		if (italicContent) {
+			return {
+				node: italic(
+					parseInlineSegment(italicContent.content, options, {
+						allowTimestamp: false,
+						allowBold: true,
+						allowItalic: false,
+						allowStrike: true,
+						allowSpoiler: true,
+						allowAutolink: false,
+					}),
+				),
+				length: italicContent.length,
+			};
+		}
+	}
+
+	if (config.allowStrike !== false) {
+		const strikeContent = value.startsWith('~~', cursor)
+			? findDelimitedContent(value, cursor, '~~', '~~', options, () => !hasRepeatedDelimiter(value, cursor, '~~'))
+			: findDelimitedContent(value, cursor, '~', '~', options, () => !(value[cursor - 1] === '~' && /\s/.test(value[cursor + 1] ?? '')));
+
+		if (strikeContent) {
+			return {
+				node: strike(
+					parseInlineSegment(strikeContent.content, options, {
+						allowTimestamp: true,
+						allowBold: true,
+						allowItalic: true,
+						allowStrike: false,
+						allowSpoiler: true,
+					}),
+				),
+				length: strikeContent.length,
+			};
+		}
+	}
+
+	return undefined;
 };
 
 const parseInlineSegment = (
@@ -809,15 +1038,21 @@ const parseInlineSegment = (
 	config: {
 		allowTimestamp?: boolean;
 		allowBold?: boolean;
+		allowItalic?: boolean;
 		allowStrike?: boolean;
+		allowSpoiler?: boolean;
 		allowAutolink?: boolean;
 	} = {},
 ) => {
 	const result = [] as Array<
 		| ReturnType<typeof plain>
 		| ReturnType<typeof bold>
+		| ReturnType<typeof italic>
 		| ReturnType<typeof strike>
+		| ReturnType<typeof spoiler>
 		| ReturnType<typeof emoji>
+		| ReturnType<typeof emojiUnicode>
+		| ReturnType<typeof emoticon>
 		| ReturnType<typeof mentionUser>
 		| ReturnType<typeof mentionChannel>
 		| ReturnType<typeof link>
@@ -846,6 +1081,19 @@ const parseInlineSegment = (
 
 	while (cursor < value.length) {
 		const remaining = value.slice(cursor);
+
+		if (config.allowItalic !== false && remaining.startsWith('___')) {
+			pushPlain('_');
+			cursor += 1;
+			continue;
+		}
+
+		if (config.allowItalic !== false && remaining.startsWith('-_-_')) {
+			pushPlain('-');
+			cursor += 1;
+			continue;
+		}
+
 		const markdownReference = parseMarkdownReference(value, cursor);
 		if (markdownReference) {
 			result.push(markdownReference.node as any);
@@ -874,6 +1122,13 @@ const parseInlineSegment = (
 			continue;
 		}
 
+		const delimitedCandidate = parseInlineDelimited(value, cursor, options, config);
+		if (delimitedCandidate) {
+			result.push(delimitedCandidate.node as any);
+			cursor += delimitedCandidate.length;
+			continue;
+		}
+
 		const patterns = [
 			{
 				match: /^`([^`\n]+)`/.exec(remaining),
@@ -897,20 +1152,6 @@ const parseInlineSegment = (
 			{
 				match: options?.katex?.parenthesisSyntax ? /^\\\((.+?)\\\)/.exec(remaining) : null,
 				build: (match: RegExpExecArray) => inlineKatex(match[1]),
-			},
-			{
-				match:
-					config.allowBold !== false
-						? /^\*\*([^*\n]+)\*\*/.exec(remaining) ?? /^\*([^*\n]+)\*/.exec(remaining)
-						: null,
-				build: (match: RegExpExecArray) => bold(parseInlineSegment(match[1], options, { allowTimestamp: false, allowStrike: false, allowBold: false })),
-			},
-			{
-				match:
-					config.allowStrike !== false
-						? /^~~([^~\n]+)~~/.exec(remaining) ?? /^~([^~\n]+)~/.exec(remaining)
-						: null,
-				build: (match: RegExpExecArray) => strike(parseInlineSegment(match[1], options, { allowTimestamp: true, allowBold: true, allowStrike: false })),
 			},
 			{
 				match: isMentionBoundary(value, cursor) ? /^@([^\s,:@]+(?:[:@][^\s,:@]+)?)/.exec(remaining) : null,
