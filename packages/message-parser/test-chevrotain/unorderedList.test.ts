@@ -1,0 +1,53 @@
+import { parse } from '../src/parsers/chevrotain';
+import { unorderedList, plain, listItem, bold, emoji } from '../tests/helpers';
+
+test.each([
+	[
+		`
+- First item
+- Second item
+- Third item
+- *Fourth item*
+- :smile:
+`.trim(),
+		[
+			unorderedList([
+				listItem([plain('First item')]),
+				listItem([plain('Second item')]),
+				listItem([plain('Third item')]),
+				listItem([bold([plain('Fourth item')])]),
+				listItem([emoji('smile')]),
+			]),
+		],
+	],
+	[
+		`
+* First item
+* Second item
+* Third item
+* *Fourth item*
+`.trim(),
+		[
+			unorderedList([
+				listItem([plain('First item')]),
+				listItem([plain('Second item')]),
+				listItem([plain('Third item')]),
+				listItem([bold([plain('Fourth item')])]),
+			]),
+		],
+	],
+	[
+		`
+- First item
+* Second item
+* Third item
+* *Fourth item*
+`.trim(),
+		[
+			unorderedList([listItem([plain('First item')])]),
+			unorderedList([listItem([plain('Second item')]), listItem([plain('Third item')]), listItem([bold([plain('Fourth item')])])]),
+		],
+	],
+])('parses %p', (input, output) => {
+	expect(parse(input)).toMatchObject(output);
+});

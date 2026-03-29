@@ -2,7 +2,28 @@ import { CstParser, EOF, createToken, type IToken } from 'chevrotain';
 
 import type { Root } from '../definitions';
 import type { Options } from '../index';
-import { code, codeLine, heading, lineBreak, mentionChannel, paragraph, plain } from '../utils';
+import {
+	bold,
+	code,
+	codeLine,
+	emoji,
+	heading,
+	inlineKatex,
+	katex,
+	lineBreak,
+	link,
+	listItem,
+	mentionChannel,
+	mentionUser,
+	orderedList,
+	paragraph,
+	plain,
+	quote,
+	spoilerBlock,
+	task,
+	tasks,
+	unorderedList,
+} from '../utils';
 
 const Line = createToken({ name: 'Line', pattern: /[^\n]*/ });
 const Newline = createToken({ name: 'Newline', pattern: /\n/ });
@@ -43,6 +64,12 @@ class MessageParser extends CstParser {
 			$.MANY(() => {
 				$.OR([
 					{ GATE: () => this.isCodeBlockStart(), ALT: () => $.SUBRULE($.codeBlock) },
+					{ GATE: () => this.isKatexBlockStart(), ALT: () => $.SUBRULE($.katexBlock) },
+					{ GATE: () => this.isSpoilerBlockStart(), ALT: () => $.SUBRULE($.spoilerBlockRule) },
+					{ GATE: () => this.isBlockquoteStart(), ALT: () => $.SUBRULE($.blockquoteBlock) },
+					{ GATE: () => this.isTaskListStart(), ALT: () => $.SUBRULE($.taskListBlock) },
+					{ GATE: () => this.isOrderedListStart(), ALT: () => $.SUBRULE($.orderedListBlock) },
+					{ GATE: () => this.isUnorderedListStart(), ALT: () => $.SUBRULE($.unorderedListBlock) },
 					{ GATE: () => this.isHeadingStart(), ALT: () => $.SUBRULE($.headingBlock) },
 					{ GATE: () => this.isLineBreakStart(), ALT: () => $.SUBRULE($.lineBreakBlock) },
 					{ ALT: () => $.SUBRULE($.paragraphBlock) },
@@ -70,6 +97,68 @@ class MessageParser extends CstParser {
 			});
 		});
 
+		$.RULE('blockquoteBlock', () => {
+			$.AT_LEAST_ONE(() => {
+				$.CONSUME(Line);
+				$.OPTION(() => {
+					$.CONSUME(Newline);
+				});
+			});
+		});
+
+		$.RULE('taskListBlock', () => {
+			$.AT_LEAST_ONE(() => {
+				$.CONSUME(Line);
+				$.OPTION(() => {
+					$.CONSUME(Newline);
+				});
+			});
+		});
+
+		$.RULE('orderedListBlock', () => {
+			$.AT_LEAST_ONE(() => {
+				$.CONSUME(Line);
+				$.OPTION(() => {
+					$.CONSUME(Newline);
+				});
+			});
+		});
+
+		$.RULE('unorderedListBlock', () => {
+			$.AT_LEAST_ONE(() => {
+				$.CONSUME(Line);
+				$.OPTION(() => {
+					$.CONSUME(Newline);
+				});
+			});
+		});
+
+		$.RULE('spoilerBlockRule', () => {
+			$.CONSUME(Line);
+			$.CONSUME(Newline);
+			$.AT_LEAST_ONE(() => {
+				$.CONSUME1(Line);
+				$.OPTION(() => {
+					$.CONSUME1(Newline);
+				});
+			});
+			$.CONSUME2(Line);
+		});
+
+		$.RULE('katexBlock', () => {
+			$.CONSUME(Line);
+			$.OPTION(() => {
+				$.CONSUME(Newline);
+			});
+			$.MANY(() => {
+				$.CONSUME1(Line);
+				$.OPTION1(() => {
+					$.CONSUME1(Newline);
+				});
+			});
+			$.CONSUME2(Line);
+		});
+
 		$.RULE('lineBreakBlock', () => {
 			$.CONSUME(Line);
 			$.CONSUME(Newline);
@@ -88,6 +177,12 @@ class MessageParser extends CstParser {
 	public document!: () => void;
 	public codeBlock!: () => void;
 	public headingBlock!: () => void;
+	public blockquoteBlock!: () => void;
+	public taskListBlock!: () => void;
+	public orderedListBlock!: () => void;
+	public unorderedListBlock!: () => void;
+	public spoilerBlockRule!: () => void;
+	public katexBlock!: () => void;
 	public lineBreakBlock!: () => void;
 	public paragraphBlock!: () => void;
 
@@ -111,6 +206,42 @@ class MessageParser extends CstParser {
 		const line = this.currentLineToken();
 
 		return Boolean(line && headingMatch(line.image));
+	}
+
+	private isBlockquoteStart(): boolean {
+		const line = this.currentLineToken();
+
+		return Boolean(line && blockquoteLine(line.image));
+	}
+
+	private isTaskListStart(): boolean {
+		const line = this.currentLineToken();
+
+		return Boolean(line && taskLine(line.image));
+	}
+
+	private isOrderedListStart(): boolean {
+		const line = this.currentLineToken();
+
+		return Boolean(line && orderedListLine(line.image));
+	}
+
+	private isUnorderedListStart(): boolean {
+		const line = this.currentLineToken();
+
+		return Boolean(line && unorderedListLine(line.image));
+	}
+
+	private isSpoilerBlockStart(): boolean {
+		const line = this.currentLineToken();
+
+		return Boolean(line && line.image === '||' && this.nextToken()?.tokenType === Newline);
+	}
+
+	private isKatexBlockStart(): boolean {
+		const line = this.currentLineToken();
+
+		return Boolean(line && line.image === '\\[');
 	}
 
 	private isLineBreakStart(): boolean {
@@ -138,6 +269,53 @@ const headingMatch = (line: string): { level: 1 | 2 | 3 | 4; text: string } | un
 	};
 };
 
+const blockquoteLine = (line: string): string | undefined => {
+	if (!line.startsWith('>')) {
+		return undefined;
+	}
+
+	return line.replace(/^>[ \t]?/, '');
+};
+
+const taskLine = (line: string): { status: boolean; text: string } | undefined => {
+	const match = /^- \[(x| )\][ \t]+(.*)$/.exec(line);
+
+	if (!match) {
+		return undefined;
+	}
+
+	return {
+		status: match[1] === 'x',
+		text: match[2],
+	};
+};
+
+const orderedListLine = (line: string): { number: number; text: string } | undefined => {
+	const match = /^(\d+)\.[ \t]+(.*)$/.exec(line);
+
+	if (!match) {
+		return undefined;
+	}
+
+	return {
+		number: Number.parseInt(match[1], 10),
+		text: match[2],
+	};
+};
+
+const unorderedListLine = (line: string): { marker: '-' | '*'; text: string } | undefined => {
+	const match = /^([*-])[ \t]+(.*)$/.exec(line);
+
+	if (!match) {
+		return undefined;
+	}
+
+	return {
+		marker: match[1] as '-' | '*',
+		text: match[2],
+	};
+};
+
 const codeFenceLanguage = (line: string): string | undefined => {
 	const match = /^```([a-zA-Z0-9 _\-.]+)?$/.exec(line);
 
@@ -159,7 +337,77 @@ const parseParagraphInlines = (line: string) => {
 	return rest ? [mentionChannel(channel), plain(rest)] : [mentionChannel(channel)];
 };
 
-const buildAst = (tokens: ParsedLine[]): Root => {
+const parseInlineSegment = (value: string) => {
+	const result = [] as Array<ReturnType<typeof plain> | ReturnType<typeof bold> | ReturnType<typeof emoji> | ReturnType<typeof mentionUser> | ReturnType<typeof mentionChannel> | ReturnType<typeof link> | ReturnType<typeof inlineKatex>>;
+	let cursor = 0;
+
+	const pushPlain = (text: string) => {
+		if (!text) {
+			return;
+		}
+
+		const previous = result[result.length - 1];
+
+		if (previous?.type === 'PLAIN_TEXT') {
+			previous.value += text;
+			return;
+		}
+
+		result.push(plain(text));
+	};
+
+	while (cursor < value.length) {
+		const remaining = value.slice(cursor);
+
+		const patterns = [
+			{
+				match: /^\[([^\]]+)\]\(([^)]+)\)/.exec(remaining),
+				build: (match: RegExpExecArray) => link(match[2], [plain(match[1])]),
+			},
+			{
+				match: /^\*\*([^*]+)\*\*/.exec(remaining) ?? /^\*([^*]+)\*/.exec(remaining),
+				build: (match: RegExpExecArray) => bold([plain(match[1])]),
+			},
+			{
+				match: /^:([0-9a-zA-Z\-_.+]+):/.exec(remaining),
+				build: (match: RegExpExecArray) => emoji(match[1]),
+			},
+			{
+				match: /^@([^\s,:@]+(?::[^\s,:@]+)*)/.exec(remaining),
+				build: (match: RegExpExecArray) => mentionUser(match[1]),
+			},
+			{
+				match: /^#([^\s,#]+)/.exec(remaining),
+				build: (match: RegExpExecArray) => mentionChannel(match[1]),
+			},
+			{
+				match: /^\\\((.+?)\\\)/.exec(remaining),
+				build: (match: RegExpExecArray) => inlineKatex(match[1]),
+			},
+		] as const;
+
+		const found = patterns.find((candidate) => candidate.match);
+
+		if (!found || !found.match) {
+			pushPlain(remaining[0]);
+			cursor += 1;
+			continue;
+		}
+
+		if (found.match.index > 0) {
+			pushPlain(remaining.slice(0, found.match.index));
+			cursor += found.match.index;
+			continue;
+		}
+
+		result.push(found.build(found.match));
+		cursor += found.match[0].length;
+	}
+
+	return result.length ? result : [plain('')];
+};
+
+const buildAst = (tokens: ParsedLine[], options?: Options): Root => {
 	const output: Root = [];
 
 	for (let index = 0; index < tokens.length; ) {
@@ -213,6 +461,198 @@ const buildAst = (tokens: ParsedLine[]): Root => {
 				}
 			}
 
+			continue;
+		}
+
+		if (options?.katex?.parenthesisSyntax && current.value === '\\[') {
+			let cursor = index + 1;
+			const content = [''] as string[];
+			let closed = false;
+
+			if (tokens[cursor]?.kind === 'newline') {
+				cursor += 1;
+			}
+
+			while (cursor < tokens.length) {
+				const line = tokens[cursor];
+
+				if (line?.kind === 'line' && line.value.includes('\\]')) {
+					const closingIndex = line.value.indexOf('\\]');
+					content.push(line.value.slice(0, closingIndex));
+					output.push(katex(content.join('\n')));
+					index = cursor + 1;
+					closed = true;
+					break;
+				}
+
+				if (line?.kind === 'line') {
+					content.push(line.value);
+				}
+
+				cursor += 1;
+				if (tokens[cursor]?.kind === 'newline') {
+					cursor += 1;
+				}
+			}
+
+			if (closed) {
+				continue;
+			}
+		}
+
+		if (current.value === '||' && tokens[index + 1]?.kind === 'newline') {
+			let cursor = index + 2;
+			const paragraphs = [] as ReturnType<typeof paragraph>[];
+			let closed = false;
+
+			while (cursor < tokens.length) {
+				const line = tokens[cursor];
+
+				if (line?.kind === 'line' && line.value === '||') {
+					output.push(spoilerBlock(paragraphs));
+					index = cursor + 1;
+					closed = true;
+					break;
+				}
+
+				if (line?.kind === 'line') {
+					paragraphs.push(paragraph([plain(line.value)]));
+				}
+
+				cursor += 1;
+				if (tokens[cursor]?.kind === 'newline') {
+					cursor += 1;
+				}
+			}
+
+			if (closed) {
+				if (tokens[index]?.kind === 'newline') {
+					output.push(lineBreak());
+					index += 1;
+				}
+
+				continue;
+			}
+		}
+
+		if (blockquoteLine(current.value) !== undefined) {
+			const paragraphs = [] as ReturnType<typeof paragraph>[];
+			let cursor = index;
+
+			while (cursor < tokens.length) {
+				const line = tokens[cursor];
+
+				if (line?.kind !== 'line') {
+					break;
+				}
+
+				const blockLine = blockquoteLine(line.value);
+
+				if (blockLine === undefined) {
+					break;
+				}
+
+				paragraphs.push(paragraph(parseInlineSegment(blockLine)));
+				cursor += 1;
+
+				if (tokens[cursor]?.kind === 'newline') {
+					cursor += 1;
+				}
+			}
+
+			output.push(quote(paragraphs));
+			index = cursor;
+			continue;
+		}
+
+		if (taskLine(current.value) !== undefined) {
+			const items = [] as ReturnType<typeof task>[];
+			let cursor = index;
+
+			while (cursor < tokens.length) {
+				const line = tokens[cursor];
+
+				if (line?.kind !== 'line') {
+					break;
+				}
+
+				const item = taskLine(line.value);
+
+				if (!item) {
+					break;
+				}
+
+				items.push(task(parseInlineSegment(item.text), item.status));
+				cursor += 1;
+
+				if (tokens[cursor]?.kind === 'newline') {
+					cursor += 1;
+				}
+			}
+
+			output.push(tasks(items));
+			index = cursor;
+			continue;
+		}
+
+		if (orderedListLine(current.value) !== undefined) {
+			const items = [] as ReturnType<typeof listItem>[];
+			let cursor = index;
+
+			while (cursor < tokens.length) {
+				const line = tokens[cursor];
+
+				if (line?.kind !== 'line') {
+					break;
+				}
+
+				const item = orderedListLine(line.value);
+
+				if (!item) {
+					break;
+				}
+
+				items.push(listItem(parseInlineSegment(item.text), item.number));
+				cursor += 1;
+
+				if (tokens[cursor]?.kind === 'newline') {
+					cursor += 1;
+				}
+			}
+
+			output.push(orderedList(items));
+			index = cursor;
+			continue;
+		}
+
+		if (unorderedListLine(current.value) !== undefined) {
+			const first = unorderedListLine(current.value);
+			const items = [] as ReturnType<typeof listItem>[];
+			let cursor = index;
+
+			while (cursor < tokens.length) {
+				const line = tokens[cursor];
+
+				if (line?.kind !== 'line') {
+					break;
+				}
+
+				const item = unorderedListLine(line.value);
+
+				if (!item || item.marker !== first?.marker) {
+					break;
+				}
+
+				items.push(listItem(parseInlineSegment(item.text)));
+				cursor += 1;
+
+				if (tokens[cursor]?.kind === 'newline') {
+					cursor += 1;
+				}
+			}
+
+			output.push(unorderedList(items));
+			index = cursor;
 			continue;
 		}
 
@@ -280,7 +720,7 @@ export const parse = (input: string, _options?: Options): Root => {
 
 	validateWithChevrotain(tokens);
 
-	return buildAst(tokens);
+	return buildAst(tokens, _options);
 };
 
 export { parse as parser };
