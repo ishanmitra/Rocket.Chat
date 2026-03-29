@@ -30,6 +30,9 @@ import {
 	timestampFromHours,
 	timestampFromIsoTime,
 	unorderedList,
+	autoEmail,
+	autoLink,
+	phoneChecker,
 } from '../utils';
 
 const Line = createToken({ name: 'Line', pattern: /[^\n]*/ });
@@ -415,6 +418,225 @@ const parseTimestampExpression = (expression: string): { raw: string; format?: '
 	return { raw: expression };
 };
 
+const isInlineBoundary = (value: string, cursor: number): boolean => {
+	if (cursor === 0) {
+		return true;
+	}
+
+	return /\s|[(<]/.test(value[cursor - 1] ?? '');
+};
+
+const trimTrailingUrlPunctuation = (candidate: string): string => {
+	let trimmed = candidate;
+
+	while (/[.,!]/.test(trimmed[trimmed.length - 1] ?? '')) {
+		trimmed = trimmed.slice(0, -1);
+	}
+
+	while ((trimmed.match(/\)/g)?.length ?? 0) > (trimmed.match(/\(/g)?.length ?? 0)) {
+		trimmed = trimmed.slice(0, -1);
+	}
+
+	return trimmed;
+};
+
+const looksLikeAutoUrl = (candidate: string, options?: Options): boolean => {
+	if (/^[A-Za-z0-9+-]{1,32}:/.test(candidate)) {
+		return true;
+	}
+
+	if (candidate.includes('.')) {
+		return true;
+	}
+
+	if (candidate.startsWith('localhost')) {
+		return true;
+	}
+
+	return Boolean(options?.customDomains?.some((suffix) => candidate.endsWith(`.${suffix}`) || candidate === suffix));
+};
+
+const parsePhoneCandidate = (candidate: string): { text: string; number: string } | undefined => {
+	const match = /^\+((\(\d+\))|\d+)(-\d+|\d+)?(-\d+)?/.exec(candidate);
+
+	if (!match) {
+		return undefined;
+	}
+
+	const text = match[0];
+	const number = text.replace(/[^\d]/g, '');
+
+	if (number.length < 5) {
+		return undefined;
+	}
+
+	return { text, number };
+};
+
+const parseMarkdownReference = (value: string, cursor: number): { node: ReturnType<typeof link> | ReturnType<typeof image>; length: number } | undefined => {
+	const isImageRef = value[cursor] === '!' && value[cursor + 1] === '[';
+	const start = isImageRef ? cursor + 1 : cursor;
+
+	if (value[start] !== '[') {
+		return undefined;
+	}
+
+	const closeTitle = value.indexOf(']', start + 1);
+	if (closeTitle === -1 || value[closeTitle + 1] !== '(') {
+		return undefined;
+	}
+
+	let hrefEnd = closeTitle + 2;
+	let depth = 1;
+
+	while (hrefEnd < value.length && depth > 0) {
+		const char = value[hrefEnd];
+
+		if (char === '(') {
+			depth += 1;
+		} else if (char === ')') {
+			depth -= 1;
+			if (depth === 0) {
+				break;
+			}
+		}
+
+		hrefEnd += 1;
+	}
+
+	if (depth !== 0) {
+		return undefined;
+	}
+
+	const rawTitle = value.slice(start + 1, closeTitle);
+	const rawHref = value.slice(closeTitle + 2, hrefEnd);
+	const phone = parsePhoneCandidate(rawHref);
+	const href = phone ? `tel:${phone.number}` : rawHref;
+	const length = hrefEnd - cursor + 1;
+
+	if (isImageRef) {
+		return {
+			node: image(href, rawTitle ? plain(rawTitle) : plain(href)),
+			length,
+		};
+	}
+
+	return {
+		node: link(
+			href,
+			rawTitle ? (parseInlineSegment(rawTitle, undefined, { allowTimestamp: false, allowBold: true, allowStrike: true, allowAutolink: false }) as any) : undefined,
+		),
+		length,
+	};
+};
+
+const parseAngleReference = (value: string, cursor: number): { node: ReturnType<typeof link>; length: number } | undefined => {
+	if (value[cursor] !== '<') {
+		return undefined;
+	}
+
+	const end = value.indexOf('>', cursor + 1);
+	if (end === -1) {
+		return undefined;
+	}
+
+	const content = value.slice(cursor + 1, end);
+	const separator = content.indexOf('|');
+
+	if (separator === -1) {
+		return undefined;
+	}
+
+	const href = content.slice(0, separator);
+	const title = content.slice(separator + 1);
+
+	if (!href || !title || /[\r\n]/.test(content)) {
+		return undefined;
+	}
+
+	return {
+		node: link(href, [plain(title)]),
+		length: end - cursor + 1,
+	};
+};
+
+const parseEmailCandidate = (value: string, cursor: number): { node: ReturnType<typeof link>; length: number } | undefined => {
+	if (!isInlineBoundary(value, cursor)) {
+		return undefined;
+	}
+
+	const match = /^(mailto:)?([^\s()@`][^\s()]*@[^\s()]+\.[^\s().,!?]+)/.exec(value.slice(cursor));
+	if (!match) {
+		return undefined;
+	}
+
+	const address = match[2];
+	const linked = autoEmail(address);
+
+	if (linked.type !== 'LINK') {
+		return undefined;
+	}
+
+	return {
+		node: match[1] ? link(`mailto:${address}`, [plain(address)]) : linked,
+		length: match[0].length,
+	};
+};
+
+const parsePhoneLink = (value: string, cursor: number): { node: ReturnType<typeof link>; length: number } | undefined => {
+	if (!isInlineBoundary(value, cursor) || value[cursor] !== '+') {
+		return undefined;
+	}
+
+	const parsed = parsePhoneCandidate(value.slice(cursor));
+
+	if (!parsed) {
+		return undefined;
+	}
+
+	const linked = phoneChecker(parsed.text, parsed.number);
+
+	if (linked.type !== 'LINK') {
+		return undefined;
+	}
+
+	return {
+		node: linked,
+		length: parsed.text.length,
+	};
+};
+
+const parseAutoUrlCandidate = (value: string, cursor: number, options?: Options): { node: ReturnType<typeof link>; length: number } | undefined => {
+	if (!isInlineBoundary(value, cursor)) {
+		return undefined;
+	}
+
+	const raw = /^[^\s<>]+/.exec(value.slice(cursor))?.[0];
+	if (!raw) {
+		return undefined;
+	}
+
+	const candidate = trimTrailingUrlPunctuation(raw);
+	if (!candidate) {
+		return undefined;
+	}
+
+	if (!looksLikeAutoUrl(candidate, options)) {
+		return undefined;
+	}
+
+	const linked = autoLink(candidate, options?.customDomains);
+
+	if (linked.type !== 'LINK') {
+		return undefined;
+	}
+
+	return {
+		node: linked,
+		length: candidate.length,
+	};
+};
+
 const isMentionBoundary = (value: string, cursor: number): boolean => {
 	if (cursor === 0) {
 		return true;
@@ -430,6 +652,7 @@ const parseInlineSegment = (
 		allowTimestamp?: boolean;
 		allowBold?: boolean;
 		allowStrike?: boolean;
+		allowAutolink?: boolean;
 	} = {},
 ) => {
 	const result = [] as Array<
@@ -465,15 +688,21 @@ const parseInlineSegment = (
 
 	while (cursor < value.length) {
 		const remaining = value.slice(cursor);
+		const markdownReference = parseMarkdownReference(value, cursor);
+		if (markdownReference) {
+			result.push(markdownReference.node as any);
+			cursor += markdownReference.length;
+			continue;
+		}
+
+		const angleReference = parseAngleReference(value, cursor);
+		if (angleReference) {
+			result.push(angleReference.node);
+			cursor += angleReference.length;
+			continue;
+		}
+
 		const patterns = [
-			{
-				match: /^!\[([^\]]*)\]\(([^)]+)\)/.exec(remaining),
-				build: (match: RegExpExecArray) => image(match[2], plain(match[1] || match[2])),
-			},
-			{
-				match: /^\[([^\]]+)\]\(([^)]+)\)/.exec(remaining),
-				build: (match: RegExpExecArray) => link(match[2], [plain(match[1])]),
-			},
 			{
 				match: /^`([^`\n]+)`/.exec(remaining),
 				build: (match: RegExpExecArray) => inlineCode(plain(match[1])),
@@ -516,7 +745,7 @@ const parseInlineSegment = (
 				build: (match: RegExpExecArray) => emoji(match[1]),
 			},
 			{
-				match: isMentionBoundary(value, cursor) ? /^@([^\s,]+)/.exec(remaining) : null,
+				match: isMentionBoundary(value, cursor) ? /^@([^\s,:@]+(?:[:@][^\s,:@]+)?)/.exec(remaining) : null,
 				build: (match: RegExpExecArray) => mentionUser(match[1]),
 			},
 			{
@@ -528,6 +757,29 @@ const parseInlineSegment = (
 		const found = patterns.find((candidate) => candidate.match);
 
 		if (!found || !found.match) {
+			if (config.allowAutolink !== false) {
+				const emailReference = parseEmailCandidate(value, cursor);
+				if (emailReference) {
+					result.push(emailReference.node);
+					cursor += emailReference.length;
+					continue;
+				}
+
+				const phoneReference = parsePhoneLink(value, cursor);
+				if (phoneReference) {
+					result.push(phoneReference.node);
+					cursor += phoneReference.length;
+					continue;
+				}
+
+				const autoUrl = parseAutoUrlCandidate(value, cursor, options);
+				if (autoUrl) {
+					result.push(autoUrl.node);
+					cursor += autoUrl.length;
+					continue;
+				}
+			}
+
 			pushPlain(remaining[0]);
 			cursor += 1;
 			continue;
