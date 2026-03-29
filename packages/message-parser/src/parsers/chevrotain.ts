@@ -4,10 +4,12 @@ import type { Root } from '../definitions';
 import type { Options } from '../index';
 import {
 	bold,
+	bigEmoji,
 	code,
 	codeLine,
 	color,
 	emoji,
+	emojiUnicode,
 	heading,
 	image,
 	inlineKatex,
@@ -18,6 +20,7 @@ import {
 	listItem,
 	mentionChannel,
 	mentionUser,
+	emoticon,
 	orderedList,
 	paragraph,
 	plain,
@@ -440,8 +443,163 @@ const trimTrailingUrlPunctuation = (candidate: string): string => {
 	return trimmed;
 };
 
+const unicodeEmojiPattern =
+	/^(?:\p{Regional_Indicator}{2}|(?:\p{Extended_Pictographic}(?:\uFE0E|\uFE0F)?(?:\p{Emoji_Modifier})?)(?:\u200D(?:\p{Extended_Pictographic}(?:\uFE0E|\uFE0F)?(?:\p{Emoji_Modifier})?))*)/u;
+
+const emoticonEntries = [
+	[':)', 'slight_smile'],
+	[':-)', 'slight_smile'],
+	['=]', 'slight_smile'],
+	['=)', 'slight_smile'],
+	[':]', 'slight_smile'],
+	['D:', 'fearful'],
+	[':*', 'kissing_heart'],
+	[':-*', 'kissing_heart'],
+	['=*', 'kissing_heart'],
+	[':^*', 'kissing_heart'],
+	['-_-', 'expressionless'],
+	['-__-', 'expressionless'],
+	['-___-', 'expressionless'],
+] as const;
+
+const matchUnicodeEmoji = (value: string): string | undefined => unicodeEmojiPattern.exec(value)?.[0];
+
+const previousEmojiBoundary = (value: string, cursor: number): boolean => {
+	if (cursor === 0) {
+		return true;
+	}
+
+	return /\s|"|\n/.test(value[cursor - 1] ?? '');
+};
+
+const nextEmojiBoundary = (value: string, end: number): boolean => {
+	const next = value[end];
+	return next === undefined || /\s|"|\n/.test(next);
+};
+
+const parseEmojiCandidate = (
+	value: string,
+	cursor: number,
+	config: {
+		requireLeadingBoundary?: boolean;
+		requireTrailingBoundary?: boolean;
+	} = {},
+): { node: ReturnType<typeof emoji> | ReturnType<typeof emojiUnicode>; length: number } | undefined => {
+	const remaining = value.slice(cursor);
+	const shortCode = /^:([0-9a-zA-Z\-_.+]+):/.exec(remaining);
+
+	if (shortCode) {
+		const next = value[cursor + shortCode[0].length];
+		const hasLeadingBoundary = config.requireLeadingBoundary === false || previousEmojiBoundary(value, cursor);
+		const hasTrailingBoundary = config.requireTrailingBoundary === false || next === undefined || /\s/.test(next);
+		if (hasLeadingBoundary && hasTrailingBoundary) {
+			return {
+				node: emoji(shortCode[1]),
+				length: shortCode[0].length,
+			};
+		}
+	}
+
+	const unicode = matchUnicodeEmoji(remaining);
+	if (!unicode) {
+		return undefined;
+	}
+
+	if (config.requireLeadingBoundary !== false && !previousEmojiBoundary(value, cursor)) {
+		return undefined;
+	}
+
+	const next = value[cursor + unicode.length];
+	if (config.requireTrailingBoundary !== false && next !== undefined && !/\s/.test(next)) {
+		return undefined;
+	}
+
+	return {
+		node: emojiUnicode(unicode),
+		length: unicode.length,
+	};
+};
+
+const parseBigEmojiCandidate = (
+	value: string,
+	cursor: number,
+	options?: Options,
+): { node: ReturnType<typeof emoji> | ReturnType<typeof emojiUnicode> | ReturnType<typeof emoticon>; length: number } | undefined => {
+	if (options?.emoticons) {
+		for (const [text, shortCode] of emoticonEntries) {
+			if (value.startsWith(text, cursor)) {
+				return {
+					node: emoticon(text, shortCode),
+					length: text.length,
+				};
+			}
+		}
+	}
+
+	return parseEmojiCandidate(value, cursor, { requireLeadingBoundary: false, requireTrailingBoundary: false });
+};
+
+const parseEmoticonCandidate = (value: string, cursor: number, options?: Options): { node: ReturnType<typeof emoticon>; length: number } | undefined => {
+	if (!options?.emoticons) {
+		return undefined;
+	}
+
+	for (const [text, shortCode] of emoticonEntries) {
+		if (!value.startsWith(text, cursor)) {
+			continue;
+		}
+
+		const end = cursor + text.length;
+
+		if (!previousEmojiBoundary(value, cursor) || !nextEmojiBoundary(value, end)) {
+			continue;
+		}
+
+		return {
+			node: emoticon(text, shortCode),
+			length: text.length,
+		};
+	}
+
+	return undefined;
+};
+
+const parseBigEmojiInput = (input: string, options?: Options): Root | undefined => {
+	const trimmed = input.trim();
+	if (!trimmed) {
+		return undefined;
+	}
+
+	const values = [] as Array<ReturnType<typeof emoji> | ReturnType<typeof emojiUnicode> | ReturnType<typeof emoticon>>;
+	let cursor = 0;
+
+	while (cursor < trimmed.length) {
+		const char = trimmed[cursor];
+
+		if (/\s/.test(char)) {
+			cursor += 1;
+			continue;
+		}
+
+		const emojiCandidate = parseBigEmojiCandidate(trimmed, cursor, options);
+		if (emojiCandidate) {
+			values.push(emojiCandidate.node as any);
+			cursor += emojiCandidate.length;
+			continue;
+		}
+
+		return undefined;
+	}
+
+	if (values.length < 1 || values.length > 3) {
+		return undefined;
+	}
+
+	return [bigEmoji(values as any)];
+};
+
 const looksLikeAutoUrl = (candidate: string, options?: Options): boolean => {
-	if (/^[A-Za-z0-9+-]{1,32}:/.test(candidate)) {
+	if (/^[A-Za-z][A-Za-z0-9+-]{0,31}:/.test(candidate)) {
 		return true;
 	}
 
@@ -702,6 +860,20 @@ const parseInlineSegment = (
 			continue;
 		}
 
+		const emoticonCandidate = parseEmoticonCandidate(value, cursor, options);
+		if (emoticonCandidate) {
+			result.push(emoticonCandidate.node);
+			cursor += emoticonCandidate.length;
+			continue;
+		}
+
+		const emojiCandidate = parseEmojiCandidate(value, cursor);
+		if (emojiCandidate) {
+			result.push(emojiCandidate.node as any);
+			cursor += emojiCandidate.length;
+			continue;
+		}
+
 		const patterns = [
 			{
 				match: /^`([^`\n]+)`/.exec(remaining),
@@ -739,10 +911,6 @@ const parseInlineSegment = (
 						? /^~~([^~\n]+)~~/.exec(remaining) ?? /^~([^~\n]+)~/.exec(remaining)
 						: null,
 				build: (match: RegExpExecArray) => strike(parseInlineSegment(match[1], options, { allowTimestamp: true, allowBold: true, allowStrike: false })),
-			},
-			{
-				match: /^:([0-9a-zA-Z\-_.+]+):/.exec(remaining),
-				build: (match: RegExpExecArray) => emoji(match[1]),
 			},
 			{
 				match: isMentionBoundary(value, cursor) ? /^@([^\s,:@]+(?:[:@][^\s,:@]+)?)/.exec(remaining) : null,
@@ -1107,6 +1275,11 @@ const validateWithChevrotain = (tokens: ParsedLine[]): void => {
 };
 
 export const parse = (input: string, _options?: Options): Root => {
+	const bigEmojiAst = parseBigEmojiInput(input, _options);
+	if (bigEmojiAst) {
+		return bigEmojiAst;
+	}
+
 	const tokens = tokenizeLines(input);
 
 	validateWithChevrotain(tokens);
