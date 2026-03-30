@@ -1,6 +1,6 @@
-import { CstParser, EOF, createToken, type IToken } from 'chevrotain';
+import { CstParser, EOF, createToken, type CstNode, type IToken } from 'chevrotain';
 
-import type { Root } from '../definitions';
+import type { Inlines, Root } from '../definitions';
 import type { Options } from '../index';
 import {
 	bold,
@@ -90,6 +90,8 @@ const splitStressPart = (part: string): { head: string; tail: string } | undefin
 	};
 };
 
+const hasStressPart = (part: { head: string; tail: string } | undefined): part is { head: string; tail: string } => Boolean(part);
+
 const parseNarrativeStressInput = (input: string): Root | undefined => {
 	if (!input.startsWith(narrativeStressPrefix)) {
 		return undefined;
@@ -103,11 +105,11 @@ const parseNarrativeStressInput = (input: string): Root | undefined => {
 
 	const splitParts = parts.slice(1).map(splitStressPart);
 
-	if (splitParts.some((part) => !part)) {
+	if (!splitParts.every(hasStressPart)) {
 		return undefined;
 	}
 
-	const [part1, part2, part3, part4, part5, part6, part7, part8] = splitParts as Array<{ head: string; tail: string }>;
+	const [part1, part2, part3, part4, part5, part6, part7, part8] = splitParts;
 	const referenceHead = part1.head;
 
 	if (!splitParts.every((part) => part.head === referenceHead)) {
@@ -154,7 +156,7 @@ const parseDelimiterStressInput = (input: string): Root | undefined => {
 		return undefined;
 	}
 
-	const values = [] as Root[number]['value'];
+	const values: Inlines[] = [];
 	const structuredPairs = (units - 2) / 3;
 
 	for (let index = 0; index < structuredPairs; index++) {
@@ -288,17 +290,17 @@ class MessageParser extends CstParser {
 		this.performSelfAnalysis();
 	}
 
-	public document!: () => void;
-	public codeBlock!: () => void;
-	public headingBlock!: () => void;
-	public blockquoteBlock!: () => void;
-	public taskListBlock!: () => void;
-	public orderedListBlock!: () => void;
-	public unorderedListBlock!: () => void;
-	public spoilerBlockRule!: () => void;
-	public katexBlock!: () => void;
-	public lineBreakBlock!: () => void;
-	public paragraphBlock!: () => void;
+	public document!: () => CstNode;
+	public codeBlock!: () => CstNode;
+	public headingBlock!: () => CstNode;
+	public blockquoteBlock!: () => CstNode;
+	public taskListBlock!: () => CstNode;
+	public orderedListBlock!: () => CstNode;
+	public unorderedListBlock!: () => CstNode;
+	public spoilerBlockRule!: () => CstNode;
+	public katexBlock!: () => CstNode;
+	public lineBreakBlock!: () => CstNode;
+	public paragraphBlock!: () => CstNode;
 
 	private currentLineToken(): IToken | undefined {
 		const token = this.LA(1);
@@ -474,13 +476,13 @@ const parseTimestampValue = (raw: string): string | undefined => {
 	const isoMillis = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})([+-]\d{2}:\d{2})?$/.exec(raw);
 	if (isoMillis) {
 		return timestampFromIsoTime({
-			year: isoMillis[1],
-			month: isoMillis[2],
-			day: isoMillis[3],
-			hours: isoMillis[4],
-			minutes: isoMillis[5],
-			seconds: isoMillis[6],
-			milliseconds: isoMillis[7],
+			year: isoMillis[1] as unknown as string[],
+			month: isoMillis[2] as unknown as string[],
+			day: isoMillis[3] as unknown as string[],
+			hours: isoMillis[4] as unknown as string[],
+			minutes: isoMillis[5] as unknown as string[],
+			seconds: isoMillis[6] as unknown as string[],
+			milliseconds: isoMillis[7] as unknown as string[],
 			timezone: isoMillis[8],
 		});
 	}
@@ -488,12 +490,12 @@ const parseTimestampValue = (raw: string): string | undefined => {
 	const iso = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})([+-]\d{2}:\d{2})?$/.exec(raw);
 	if (iso) {
 		return timestampFromIsoTime({
-			year: iso[1],
-			month: iso[2],
-			day: iso[3],
-			hours: iso[4],
-			minutes: iso[5],
-			seconds: iso[6],
+			year: iso[1] as unknown as string[],
+			month: iso[2] as unknown as string[],
+			day: iso[3] as unknown as string[],
+			hours: iso[4] as unknown as string[],
+			minutes: iso[5] as unknown as string[],
+			seconds: iso[6] as unknown as string[],
 			timezone: iso[7],
 		});
 	}
@@ -1051,6 +1053,11 @@ const parseInlineDelimited = (
 		allowAutolink?: boolean;
 	},
 ) => {
+	type SpoilerValue = ReturnType<typeof spoiler>['value'];
+	type BoldValue = ReturnType<typeof bold>['value'];
+	type ItalicValue = ReturnType<typeof italic>['value'];
+	type StrikeValue = ReturnType<typeof strike>['value'];
+
 	if (config.allowSpoiler !== false) {
 		const spoilerContent = findDelimitedContent(value, cursor, '||', '||', options);
 		if (spoilerContent) {
@@ -1062,7 +1069,7 @@ const parseInlineDelimited = (
 						allowItalic: true,
 						allowStrike: true,
 						allowSpoiler: false,
-					}),
+					}) as SpoilerValue,
 				),
 				length: spoilerContent.length,
 			};
@@ -1102,7 +1109,7 @@ const parseInlineDelimited = (
 						allowStrike: true,
 						allowSpoiler: true,
 						allowAutolink: false,
-					}),
+					}) as BoldValue,
 				),
 				length: boldContent.length,
 			};
@@ -1146,7 +1153,7 @@ const parseInlineDelimited = (
 						allowStrike: true,
 						allowSpoiler: true,
 						allowAutolink: false,
-					}),
+					}) as ItalicValue,
 				),
 				length: italicContent.length,
 			};
@@ -1167,7 +1174,7 @@ const parseInlineDelimited = (
 						allowItalic: true,
 						allowStrike: false,
 						allowSpoiler: true,
-					}),
+					}) as StrikeValue,
 				),
 				length: strikeContent.length,
 			};
@@ -1665,29 +1672,19 @@ const buildAst = (tokens: ParsedLine[], options?: Options): Root => {
 };
 
 const validateWithChevrotain = (tokens: ParsedLine[]): void => {
-	parser.input = tokens.map((token) =>
-		token.kind === 'line'
-			? ({
-					image: token.value,
-					tokenType: Line,
-					startOffset: 0,
-					endOffset: 0,
-					startLine: 0,
-					endLine: 0,
-					startColumn: 0,
-					endColumn: 0,
-			  } as any)
-			: ({
-					image: '\n',
-					tokenType: Newline,
-					startOffset: 0,
-					endOffset: 0,
-					startLine: 0,
-					endLine: 0,
-					startColumn: 0,
-					endColumn: 0,
-			  } as any),
-	);
+	const toToken = (image: string, tokenType: typeof Line | typeof Newline): IToken => ({
+		image,
+		tokenType,
+		tokenTypeIdx: tokenType.tokenTypeIdx ?? 0,
+		startOffset: 0,
+		endOffset: image.length > 0 ? image.length - 1 : 0,
+		startLine: 1,
+		endLine: 1,
+		startColumn: 1,
+		endColumn: image.length > 0 ? image.length : 1,
+	});
+
+	parser.input = tokens.map((token) => (token.kind === 'line' ? toToken(token.value, Line) : toToken('\n', Newline)));
 
 	parser.document();
 };
