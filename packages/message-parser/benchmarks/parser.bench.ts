@@ -15,6 +15,7 @@ import { Bench } from 'tinybench';
 import { parsePeggy } from '../src';
 import type { Options } from '../src';
 import { parse as parseChevrotain } from '../src/parsers/chevrotain';
+import { parse as parseHandwritten } from '../src/parsers/handwritten';
 
 // ── Options presets ────────────────────────────────────────────────────────
 
@@ -44,7 +45,7 @@ type BenchCategory = {
 };
 
 type ParserBenchmark = {
-	name: 'peggy' | 'chevrotain';
+	name: 'peggy' | 'chevrotain' | 'handwritten';
 	parse: (input: string, options?: Options) => unknown;
 };
 
@@ -63,13 +64,15 @@ type RelativeRow = {
 	fixture: string;
 	peggyHz: number;
 	chevrotainHz: number;
-	speedup: number;
-	faster: ParserBenchmark['name'] | 'tie';
+	handwrittenHz: number;
+	chevrotainSpeedup: number;
+	handwrittenSpeedup: number;
 };
 
 const parserBenchmarks: ParserBenchmark[] = [
 	{ name: 'peggy', parse: parsePeggy },
 	{ name: 'chevrotain', parse: parseChevrotain },
+	{ name: 'handwritten', parse: parseHandwritten },
 ];
 
 const scopeArgIndex = process.argv.indexOf('--scope');
@@ -239,8 +242,9 @@ function formatRelativeResults(rows: RelativeRow[]) {
 		'Fixture': row.fixture,
 		'Peggy ops/sec': Math.round(row.peggyHz).toLocaleString(),
 		'Chevrotain ops/sec': Math.round(row.chevrotainHz).toLocaleString(),
-		'Speedup': `${row.speedup.toFixed(2)}x`,
-		'Faster': row.faster,
+		'Handwritten ops/sec': Math.round(row.handwrittenHz).toLocaleString(),
+		'Chevrotain vs Peggy': `${row.chevrotainSpeedup.toFixed(2)}x`,
+		'Handwritten vs Peggy': `${row.handwrittenSpeedup.toFixed(2)}x`,
 	}));
 }
 
@@ -260,8 +264,10 @@ function validateParity(fixtures: BenchCategory[]): void {
 		for (const fixture of category.fixtures) {
 			const peggyAst = parsePeggy(fixture.input, fixture.options);
 			const chevrotainAst = parseChevrotain(fixture.input, fixture.options);
+			const handwrittenAst = parseHandwritten(fixture.input, fixture.options);
 
 			assert.deepStrictEqual(chevrotainAst, peggyAst, `AST mismatch in benchmark fixture "${category.name} / ${fixture.name}"`);
+			assert.deepStrictEqual(handwrittenAst, peggyAst, `AST mismatch in benchmark fixture "${category.name} / ${fixture.name}"`);
 		}
 	}
 }
@@ -278,28 +284,19 @@ function getRelativeRows(rows: BenchRow[]): RelativeRow[] {
 	return [...resultsByFixture.entries()].map(([fixture, fixtureRows]) => {
 		const { peggy } = fixtureRows;
 		const { chevrotain } = fixtureRows;
+		const { handwritten } = fixtureRows;
 
-		if (!peggy || !chevrotain) {
+		if (!peggy || !chevrotain || !handwritten) {
 			throw new Error(`Missing benchmark results for fixture "${fixture}"`);
-		}
-
-		const speedup = chevrotain.hz / peggy.hz;
-		let faster: ParserBenchmark['name'] | 'tie';
-
-		if (speedup > 1) {
-			faster = 'chevrotain';
-		} else if (speedup < 1) {
-			faster = 'peggy';
-		} else {
-			faster = 'tie';
 		}
 
 		return {
 			fixture,
 			peggyHz: peggy.hz,
 			chevrotainHz: chevrotain.hz,
-			speedup,
-			faster,
+			handwrittenHz: handwritten.hz,
+			chevrotainSpeedup: chevrotain.hz / peggy.hz,
+			handwrittenSpeedup: handwritten.hz / peggy.hz,
 		};
 	});
 }
@@ -380,23 +377,33 @@ async function run() {
 		console.log();
 	}
 
-	const normalSpeedups = getRelativeRows(allRows.filter((row) => row.kind === 'normal')).map((row) => row.speedup);
-	const stressSpeedups = getRelativeRows(allRows.filter((row) => row.kind === 'stress')).map((row) => row.speedup);
-	const slowerFixtures = getRelativeRows(allRows)
-		.filter((row) => row.faster === 'peggy')
-		.map((row) => `${row.fixture} (${row.speedup.toFixed(2)}x)`);
+	const normalRows = getRelativeRows(allRows.filter((row) => row.kind === 'normal'));
+	const stressRows = getRelativeRows(allRows.filter((row) => row.kind === 'stress'));
+	const slowerChevrotainFixtures = getRelativeRows(allRows)
+		.filter((row) => row.chevrotainSpeedup < 1)
+		.map((row) => `${row.fixture} (${row.chevrotainSpeedup.toFixed(2)}x)`);
+	const slowerHandwrittenFixtures = getRelativeRows(allRows)
+		.filter((row) => row.handwrittenSpeedup < 1)
+		.map((row) => `${row.fixture} (${row.handwrittenSpeedup.toFixed(2)}x)`);
 
 	console.log('Summary');
-	if (normalSpeedups.length > 0) {
-		console.log(`  Median speedup across typical workloads: ${median(normalSpeedups).toFixed(2)}x`);
+	if (normalRows.length > 0) {
+		console.log(`  Median Chevrotain speedup across typical workloads: ${median(normalRows.map((row) => row.chevrotainSpeedup)).toFixed(2)}x`);
+		console.log(`  Median handwritten speedup across typical workloads: ${median(normalRows.map((row) => row.handwrittenSpeedup)).toFixed(2)}x`);
 	}
-	if (stressSpeedups.length > 0) {
-		console.log(`  Median speedup across stress workloads: ${median(stressSpeedups).toFixed(2)}x`);
+	if (stressRows.length > 0) {
+		console.log(`  Median Chevrotain speedup across stress workloads: ${median(stressRows.map((row) => row.chevrotainSpeedup)).toFixed(2)}x`);
+		console.log(`  Median handwritten speedup across stress workloads: ${median(stressRows.map((row) => row.handwrittenSpeedup)).toFixed(2)}x`);
 	}
-	if (slowerFixtures.length > 0) {
-		console.log(`  Chevrotain slower fixtures: ${slowerFixtures.join(', ')}`);
+	if (slowerChevrotainFixtures.length > 0) {
+		console.log(`  Chevrotain slower fixtures: ${slowerChevrotainFixtures.join(', ')}`);
 	} else {
 		console.log('  Chevrotain was not slower on any measured fixture.');
+	}
+	if (slowerHandwrittenFixtures.length > 0) {
+		console.log(`  Handwritten slower fixtures: ${slowerHandwrittenFixtures.join(', ')}`);
+	} else {
+		console.log('  Handwritten was not slower on any measured fixture.');
 	}
 	console.log();
 

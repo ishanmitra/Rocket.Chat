@@ -42,6 +42,7 @@
 		"lint": "eslint .",
 		"test": "jest",
 		"test:chevrotain": "jest --config ./jest.chevrotain.config.ts",
+		"test:handwritten": "jest --config ./jest.handwritten.config.ts",
 		"test:pegjs": "jest",
 		"testunit": "jest",
 		"typecheck": "tsc --noEmit"
