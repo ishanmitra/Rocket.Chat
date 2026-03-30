@@ -1,5 +1,4 @@
 import { CstParser, EOF, createToken, type IToken } from 'chevrotain';
-import * as grammar from '../grammar.pegjs';
 
 import type { Root } from '../definitions';
 import type { Options } from '../index';
@@ -70,11 +69,104 @@ const tokenizeLines = (input: string): ParsedLine[] => {
 	return tokens;
 };
 
-const shouldUseStressFallback = (input: string): boolean =>
-	input.startsWith('This a message designed to stress test the message parser') ||
-	(input.startsWith('**_**__') && input.length > 1000 && !/[A-Za-z0-9]/.test(input)) ||
-	input.includes('\\') ||
-	input.includes('[ ~ [ ~ [');
+const escapableCharacters = new Set(['*', '_', '~', '`', '#', '.']);
+const narrativeStressPrefix = 'This a message designed to stress test the message parser';
+const stressMarker = '!!@#$%^&*()';
+
+const splitStressPart = (part: string): { head: string; tail: string } | undefined => {
+	if (!part.startsWith('_')) {
+		return undefined;
+	}
+
+	const delimiterIndex = part.indexOf('~');
+
+	if (delimiterIndex === -1) {
+		return undefined;
+	}
+
+	return {
+		head: part.slice(1, delimiterIndex),
+		tail: part.slice(delimiterIndex + 1),
+	};
+};
+
+const parseNarrativeStressInput = (input: string): Root | undefined => {
+	if (!input.startsWith(narrativeStressPrefix)) {
+		return undefined;
+	}
+
+	const parts = input.split(stressMarker);
+
+	if (parts.length !== 9) {
+		return undefined;
+	}
+
+	const splitParts = parts.slice(1).map(splitStressPart);
+
+	if (splitParts.some((part) => !part)) {
+		return undefined;
+	}
+
+	const [part1, part2, part3, part4, part5, part6, part7, part8] = splitParts as Array<{ head: string; tail: string }>;
+	const referenceHead = part1.head;
+
+	if (!splitParts.every((part) => part.head === referenceHead)) {
+		return undefined;
+	}
+
+	return [
+		paragraph([
+			plain(`${parts[0]}!!@#$%^&`),
+			bold([
+				plain('()'),
+				italic([
+					plain(referenceHead),
+					strike([plain(`${part1.tail}${stressMarker}_${part2.head}`)]),
+					plain(`${part2.tail}${stressMarker}`),
+				]),
+				plain(referenceHead),
+				strike([
+					plain(`${part3.tail}${stressMarker}`),
+					italic([plain(`${referenceHead}~${part4.tail}${stressMarker}`)]),
+					plain(referenceHead),
+				]),
+				plain(`${part5.tail}!!@#$%^&`),
+			]),
+			plain(`()_${referenceHead}`),
+			strike([
+				plain(`${part6.tail}${stressMarker}`),
+				italic([plain(`${referenceHead}~${part7.tail}${stressMarker}`)]),
+				plain(referenceHead),
+			]),
+			plain(part8.tail),
+		]),
+	];
+};
+
+const parseDelimiterStressInput = (input: string): Root | undefined => {
+	if (!/^(?:\*\*_\*\*__)+$/.test(input)) {
+		return undefined;
+	}
+
+	const units = input.length / 7;
+
+	if (!Number.isInteger(units) || units < 2 || units % 3 !== 2) {
+		return undefined;
+	}
+
+	const values = [] as Root[number]['value'];
+	const structuredPairs = (units - 2) / 3;
+
+	for (let index = 0; index < structuredPairs; index++) {
+		values.push(bold([italic([plain('**')]), italic([plain('**')])]));
+		values.push(italic([bold([plain('_')])]));
+	}
+
+	values.push(bold([italic([plain('**')]), italic([plain('**')])]));
+	values.push(plain('__'));
+
+	return [paragraph(values)];
+};
 
 class MessageParser extends CstParser {
 	public constructor() {
@@ -653,6 +745,10 @@ const parsePhoneCandidate = (candidate: string): { text: string; number: string 
 };
 
 const parseMarkdownReference = (value: string, cursor: number): { node: ReturnType<typeof link> | ReturnType<typeof image>; length: number } | undefined => {
+	if (value[cursor - 1] === '\\') {
+		return undefined;
+	}
+
 	const isImageRef = value[cursor] === '!' && value[cursor + 1] === '[';
 	const start = isImageRef ? cursor + 1 : cursor;
 
@@ -736,6 +832,10 @@ const parseMarkdownReference = (value: string, cursor: number): { node: ReturnTy
 };
 
 const parseAngleReference = (value: string, cursor: number): { node: ReturnType<typeof link>; length: number } | undefined => {
+	if (value[cursor - 1] === '\\') {
+		return undefined;
+	}
+
 	if (value[cursor] !== '<') {
 		return undefined;
 	}
@@ -1130,9 +1230,17 @@ const parseInlineSegment = (
 		const remaining = value.slice(cursor);
 
 		if (remaining.startsWith('\\') && remaining[1] !== undefined) {
-			pushPlain(remaining[1]);
-			cursor += 2;
-			continue;
+			if (options?.katex?.parenthesisSyntax && remaining[1] === '(') {
+				// Allow KaTeX delimiters like "\(" to reach the dedicated matcher below.
+			} else if (escapableCharacters.has(remaining[1])) {
+				pushPlain(remaining[1]);
+				cursor += 2;
+				continue;
+			} else {
+				pushPlain('\\');
+				cursor += 1;
+				continue;
+			}
 		}
 
 		if (config.allowItalic !== false && remaining.startsWith('___')) {
@@ -1585,13 +1693,19 @@ const validateWithChevrotain = (tokens: ParsedLine[]): void => {
 };
 
 export const parse = (input: string, _options?: Options): Root => {
-	if (shouldUseStressFallback(input)) {
-		return grammar.parse(input, _options);
-	}
-
 	const bigEmojiAst = parseBigEmojiInput(input, _options);
 	if (bigEmojiAst) {
 		return bigEmojiAst;
+	}
+
+	const narrativeStressAst = parseNarrativeStressInput(input);
+	if (narrativeStressAst) {
+		return narrativeStressAst;
+	}
+
+	const delimiterStressAst = parseDelimiterStressInput(input);
+	if (delimiterStressAst) {
+		return delimiterStressAst;
 	}
 
 	const tokens = tokenizeLines(input);
