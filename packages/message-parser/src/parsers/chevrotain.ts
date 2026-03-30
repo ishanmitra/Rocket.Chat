@@ -1,3 +1,4 @@
+/* eslint-disable new-cap */
 import { CstParser, EOF, createToken, type CstNode, type IToken } from 'chevrotain';
 
 import type { Inlines, Root } from '../definitions';
@@ -43,9 +44,7 @@ import {
 const Line = createToken({ name: 'Line', pattern: /[^\n]*/ });
 const Newline = createToken({ name: 'Newline', pattern: /\n/ });
 
-type ParsedLine =
-	| { kind: 'line'; value: string }
-	| { kind: 'newline' };
+type ParsedLine = { kind: 'line'; value: string } | { kind: 'newline' };
 
 const tokenizeLines = (input: string): ParsedLine[] => {
 	const tokens: ParsedLine[] = [];
@@ -174,6 +173,7 @@ class MessageParser extends CstParser {
 	public constructor() {
 		super([Line, Newline]);
 
+		// eslint-disable-next-line @typescript-eslint/no-this-alias
 		const $ = this;
 
 		$.RULE('document', () => {
@@ -291,15 +291,25 @@ class MessageParser extends CstParser {
 	}
 
 	public document!: () => CstNode;
+
 	public codeBlock!: () => CstNode;
+
 	public headingBlock!: () => CstNode;
+
 	public blockquoteBlock!: () => CstNode;
+
 	public taskListBlock!: () => CstNode;
+
 	public orderedListBlock!: () => CstNode;
+
 	public unorderedListBlock!: () => CstNode;
+
 	public spoilerBlockRule!: () => CstNode;
+
 	public katexBlock!: () => CstNode;
+
 	public lineBreakBlock!: () => CstNode;
+
 	public paragraphBlock!: () => CstNode;
 
 	private currentLineToken(): IToken | undefined {
@@ -650,7 +660,11 @@ const parseBigEmojiCandidate = (
 	return parseEmojiCandidate(value, cursor, { requireLeadingBoundary: false, requireTrailingBoundary: false });
 };
 
-const parseEmoticonCandidate = (value: string, cursor: number, options?: Options): { node: ReturnType<typeof emoticon>; length: number } | undefined => {
+const parseEmoticonCandidate = (
+	value: string,
+	cursor: number,
+	options?: Options,
+): { node: ReturnType<typeof emoticon>; length: number } | undefined => {
 	if (!options?.emoticons) {
 		return undefined;
 	}
@@ -746,7 +760,10 @@ const parsePhoneCandidate = (candidate: string): { text: string; number: string 
 	return { text, number };
 };
 
-const parseMarkdownReference = (value: string, cursor: number): { node: ReturnType<typeof link> | ReturnType<typeof image>; length: number } | undefined => {
+const parseMarkdownReference = (
+	value: string,
+	cursor: number,
+): { node: ReturnType<typeof link> | ReturnType<typeof image>; length: number } | undefined => {
 	if (value[cursor - 1] === '\\') {
 		return undefined;
 	}
@@ -826,7 +843,7 @@ const parseMarkdownReference = (value: string, cursor: number): { node: ReturnTy
 						allowReferences: false,
 						allowAutolink: false,
 						allowMentions: false,
-				  }) as any)
+					}) as any)
 				: undefined,
 		),
 		length,
@@ -913,7 +930,11 @@ const parsePhoneLink = (value: string, cursor: number): { node: ReturnType<typeo
 	};
 };
 
-const parseAutoUrlCandidate = (value: string, cursor: number, options?: Options): { node: ReturnType<typeof link>; length: number } | undefined => {
+const parseAutoUrlCandidate = (
+	value: string,
+	cursor: number,
+	options?: Options,
+): { node: ReturnType<typeof link>; length: number } | undefined => {
 	if (!isInlineBoundary(value, cursor)) {
 		return undefined;
 	}
@@ -967,12 +988,13 @@ const isUnderscoreOpeningBoundary = (value: string, cursor: number): boolean => 
 const isUnderscoreClosingBoundary = (value: string, cursor: number, delimiterLength: number): boolean =>
 	!isAlphaNumeric(value[cursor + delimiterLength]);
 
-const hasRepeatedDelimiter = (value: string, cursor: number, delimiter: string): boolean => value[cursor + delimiter.length] === delimiter[0];
+const hasRepeatedDelimiter = (value: string, cursor: number, delimiter: string): boolean =>
+	value[cursor + delimiter.length] === delimiter[0];
 
 const isEmoticonCloser = (value: string, cursor: number, options?: Options): boolean =>
 	Boolean(parseEmoticonCandidate(value, cursor - 1, options));
 
-const hasBalancedDoubleTildes = (content: string): boolean => ((content.match(/~~/g)?.length ?? 0) % 2) === 0;
+const hasBalancedDoubleTildes = (content: string): boolean => (content.match(/~~/g)?.length ?? 0) % 2 === 0;
 
 const isUnderscoreMentionTail = (value: string, candidateIndex: number, openerIndex: number): boolean => {
 	const segmentStart = Math.max(openerIndex + 1, value.lastIndexOf(' ', candidateIndex - 1) + 1);
@@ -1087,7 +1109,7 @@ const parseInlineDelimited = (
 					() => !hasRepeatedDelimiter(value, cursor, '**'),
 					undefined,
 					hasBalancedDoubleTildes,
-			  )
+				)
 			: findDelimitedContent(
 					value,
 					cursor,
@@ -1097,7 +1119,7 @@ const parseInlineDelimited = (
 					() => !(value[cursor - 1] === '*' && /\s/.test(value[cursor + 1] ?? '')),
 					undefined,
 					hasBalancedDoubleTildes,
-			  );
+				);
 
 		if (boldContent) {
 			return {
@@ -1127,7 +1149,7 @@ const parseInlineDelimited = (
 					() => value[cursor + 2] !== ' ',
 					(candidateIndex) => isUnderscoreClosingBoundary(value, candidateIndex, 2) && value[candidateIndex - 1] !== '_',
 					(content) => !content.includes('__'),
-			  )
+				)
 			: findDelimitedContent(
 					value,
 					cursor,
@@ -1141,7 +1163,7 @@ const parseInlineDelimited = (
 						(value[candidateIndex + 1] !== '_' || value[cursor - 1] !== '_') &&
 						!isUnderscoreMentionTail(value, candidateIndex, cursor),
 					(content) => !(value[cursor - 1] === '_' && content.includes('__')),
-			  );
+				);
 
 		if (italicContent) {
 			return {
@@ -1305,10 +1327,7 @@ const parseInlineSegment = (
 				build: (match: RegExpExecArray) => inlineCode(plain(match[1])),
 			},
 			{
-				match:
-					config.allowTimestamp !== false
-						? /^<t:([^>]+)>/.exec(remaining)
-						: null,
+				match: config.allowTimestamp !== false ? /^<t:([^>]+)>/.exec(remaining) : null,
 				build: (match: RegExpExecArray) => {
 					const parsedExpression = parseTimestampExpression(match[1]);
 					const parsed = parseTimestampValue(parsedExpression.raw);
@@ -1316,7 +1335,9 @@ const parseInlineSegment = (
 				},
 			},
 			{
-				match: options?.colors ? /^color:#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})(?![0-9A-Za-z\u0080-\uFFFF])/.exec(remaining) : null,
+				match: options?.colors
+					? /^color:#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})(?![0-9A-Za-z\u0080-\uFFFF])/.exec(remaining)
+					: null,
 				build: (match: RegExpExecArray) => parseColorValue(match[1]) ?? plain(match[0]),
 			},
 			{
@@ -1331,10 +1352,7 @@ const parseInlineSegment = (
 				build: (match: RegExpExecArray) => mentionUser(match[1]),
 			},
 			{
-				match:
-					config.allowMentions !== false && isMentionBoundary(value, cursor)
-						? /^#([\p{L}\p{N}\p{M}._-]+)/u.exec(remaining)
-						: null,
+				match: config.allowMentions !== false && isMentionBoundary(value, cursor) ? /^#([\p{L}\p{N}\p{M}._-]+)/u.exec(remaining) : null,
 				build: (match: RegExpExecArray) => mentionChannel(match[1]),
 			},
 		] as const;
